@@ -95,11 +95,13 @@ Login-Fenster aufgehen. Übertrage die Anmeldung stattdessen aus deinem **eigene
 
 1. Auf dem Desktop bei **kleinanzeigen.de** ganz normal einloggen.
 2. Cookies mit der Erweiterung **[Cookie-Editor](https://cookie-editor.com)** exportieren
-   (Icon → *Export* → JSON). (Ein reiner `document.cookie`-Trick reicht nicht – die Login-Cookies
-   sind `httpOnly` und nur per Erweiterung/DevTools lesbar.)
-3. Im „Konto"-Screen **„Cookie-/Session-Datei importieren"** → Datei hochladen (`POST /api/login/import`).
-   Der Import erkennt sowohl das Cookie-Editor-Format als auch eine exportierte `fastsell-session.json`
-   und speichert die Session serverseitig verschlüsselt. Danach postet der Server ohne Display.
+   (Icon → *Export* → kopiert die Cookies als JSON in die Zwischenablage). (Ein reiner
+   `document.cookie`-Trick reicht nicht – die Login-Cookies sind `httpOnly` und nur per
+   Erweiterung/DevTools lesbar.)
+3. Im „Konto"-Screen das JSON **einfügen** und „Cookies importieren" (alternativ als `.json`-Datei
+   hochladen) → `POST /api/login/import`. Der Import erkennt das Cookie-Editor-Format ebenso wie eine
+   exportierte `fastsell-session.json` und speichert die Session serverseitig verschlüsselt. Danach
+   postet der Server ohne Display.
 
 **Alternative** (wenn du FastSell auf einem Rechner **mit** Bildschirm laufen lässt): dort per
 „Jetzt einloggen" anmelden, **„Session exportieren"** (`GET /api/login/export`) und die

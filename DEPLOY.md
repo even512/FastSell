@@ -220,9 +220,10 @@ Fehler `Looks like you launched a headed browser without having a XServer runnin
 **Empfohlen – Login per Cookie-Import (im „Konto"-Screen, keine Shell/kein Display nötig):**
 
 1. Auf deinem Desktop bei kleinanzeigen.de ganz normal einloggen.
-2. Cookies mit der Erweiterung [Cookie-Editor](https://cookie-editor.com) exportieren (Export → JSON).
-3. Im „Konto"-Screen **„Cookie-/Session-Datei importieren"** (`POST /api/login/import`) – fertig. Der
-   Import akzeptiert das Cookie-Editor-Format **und** eine exportierte `fastsell-session.json`.
+2. Cookies mit der Erweiterung [Cookie-Editor](https://cookie-editor.com) exportieren (Export → JSON,
+   landet in der Zwischenablage).
+3. Im „Konto"-Screen das JSON **einfügen** und „Cookies importieren" (oder als `.json`-Datei hochladen)
+   – `POST /api/login/import`. Akzeptiert das Cookie-Editor-Format **und** eine `fastsell-session.json`.
 
 Alternativen: FastSell einmal auf einem Rechner **mit** Bildschirm laufen lassen, dort per „Jetzt
 einloggen" anmelden und per **„Session exportieren"** (`GET /api/login/export`) übertragen; die

@@ -12,6 +12,7 @@ export function AccountPanel() {
   const [result, setResult] = useState<LoginResult | null>(null);
   const [importState, setImportState] = useState<"idle" | "running" | "done" | "error">("idle");
   const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [pasteText, setPasteText] = useState("");
 
   async function refresh() {
     try {
@@ -46,14 +47,15 @@ export function AccountPanel() {
     }
   }
 
-  async function onImportFile(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // erlaubt, dieselbe Datei erneut zu wählen
-    if (!file) return;
+  async function runImport(text: string) {
+    if (!text.trim()) {
+      setImportState("error");
+      setImportMsg("Nichts zum Importieren – Cookies einfügen oder eine Datei wählen.");
+      return;
+    }
     setImportState("running");
     setImportMsg(null);
     try {
-      const text = await file.text();
       const res = await fetch("/api/login/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -63,6 +65,7 @@ export function AccountPanel() {
       if (data.ok) {
         setImportState("done");
         setImportMsg("Session importiert – der Server kann jetzt Anzeigen einstellen.");
+        setPasteText("");
         refresh();
       } else {
         setImportState("error");
@@ -72,6 +75,13 @@ export function AccountPanel() {
       setImportState("error");
       setImportMsg((err as Error).message);
     }
+  }
+
+  async function onImportFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // erlaubt, dieselbe Datei erneut zu wählen
+    if (!file) return;
+    await runImport(await file.text());
   }
 
   return (
@@ -167,13 +177,26 @@ export function AccountPanel() {
             >
               Cookie-Editor
             </a>{" "}
-            exportieren (Icon anklicken → <em>Export</em> → JSON).
+            exportieren (Icon → <em>Export</em> → kopiert die Cookies in die Zwischenablage).
           </li>
-          <li>Die Datei hier hochladen.</li>
+          <li>Hier einfügen und importieren:</li>
         </ol>
 
-        <label className="block w-full cursor-pointer rounded-xl bg-brand py-3 text-center font-semibold text-white">
-          {importState === "running" ? "Importiere …" : "Cookie-/Session-Datei importieren"}
+        <textarea
+          value={pasteText}
+          onChange={(e) => setPasteText(e.target.value)}
+          placeholder="Cookie-JSON hier einfügen …"
+          className="h-24 w-full rounded-xl border p-3 font-mono text-xs"
+        />
+        <button
+          onClick={() => runImport(pasteText)}
+          disabled={importState === "running"}
+          className="w-full rounded-xl bg-brand py-3 font-semibold text-white disabled:opacity-60"
+        >
+          {importState === "running" ? "Importiere …" : "Cookies importieren"}
+        </button>
+        <label className="block cursor-pointer text-center text-sm text-gray-500 hover:underline">
+          oder eine .json-Datei hochladen
           <input
             type="file"
             accept="application/json,.json"
