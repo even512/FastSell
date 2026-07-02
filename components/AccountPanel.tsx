@@ -146,28 +146,34 @@ export function AccountPanel() {
         </div>
       )}
 
-      {/* Session zwischen Rechnern übertragen (für headless Server ohne Bildschirm) */}
+      {/* Login ohne Bildschirm: Cookies aus dem eigenen Browser importieren */}
       <div className="space-y-3 border-t pt-5">
-        <h3 className="text-sm font-semibold text-gray-700">Session übertragen</h3>
+        <h3 className="text-sm font-semibold text-gray-700">Session übertragen (headless Server)</h3>
         <p className="text-sm text-gray-500">
-          Läuft das Backend headless (Server/Docker, kein Bildschirm)? Dann logge dich einmal auf
-          einem Rechner <strong>mit Bildschirm</strong> ein (dort öffnet sich ein echtes
-          Browserfenster), <strong>exportiere</strong> die Session und <strong>importiere</strong>{" "}
-          sie hier auf dem Server.
+          Läuft das Backend headless (Server/Docker/Unraid)? Dann kann dort kein Login-Fenster
+          aufgehen. Übertrage die Anmeldung stattdessen aus deinem <strong>eigenen</strong> Browser:
         </p>
+        <ol className="list-decimal space-y-1 pl-5 text-sm text-gray-600">
+          <li>
+            Auf dem Desktop bei <strong>kleinanzeigen.de</strong> ganz normal einloggen.
+          </li>
+          <li>
+            Cookies mit der Erweiterung{" "}
+            <a
+              href="https://cookie-editor.com"
+              target="_blank"
+              rel="noreferrer"
+              className="text-brand underline"
+            >
+              Cookie-Editor
+            </a>{" "}
+            exportieren (Icon anklicken → <em>Export</em> → JSON).
+          </li>
+          <li>Die Datei hier hochladen.</li>
+        </ol>
 
-        {hasSession && (
-          <a
-            href="/api/login/export"
-            download="fastsell-session.json"
-            className="block w-full rounded-xl border border-brand py-3 text-center font-semibold text-brand"
-          >
-            Session exportieren
-          </a>
-        )}
-
-        <label className="block w-full cursor-pointer rounded-xl border py-3 text-center font-medium text-gray-600 hover:bg-gray-50">
-          {importState === "running" ? "Importiere …" : "Session-Datei importieren"}
+        <label className="block w-full cursor-pointer rounded-xl bg-brand py-3 text-center font-semibold text-white">
+          {importState === "running" ? "Importiere …" : "Cookie-/Session-Datei importieren"}
           <input
             type="file"
             accept="application/json,.json"
@@ -179,6 +185,15 @@ export function AccountPanel() {
         {importMsg && (
           <p className={`text-sm ${importState === "error" ? "text-red-700" : "text-brand-dark"}`}>
             {importMsg}
+          </p>
+        )}
+
+        {hasSession && (
+          <p className="text-xs text-gray-500">
+            Auf diesem Rechner ist eine Session gespeichert – als Datei sichern:{" "}
+            <a href="/api/login/export" download="fastsell-session.json" className="text-brand underline">
+              Session exportieren
+            </a>
           </p>
         )}
 

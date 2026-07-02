@@ -87,19 +87,25 @@ liefert die Route einen klaren **Grund + Screenshot** der Seite zurück – der 
 beides an. `FASTSELL_LOGIN_HEADLESS=true` erlaubt einen kopflosen Testlauf ohne Display,
 `FASTSELL_LOGIN_TIMEOUT_MS` überschreibt die Wartezeit (Default 3 Min).
 
-### Headless-Server: Session übertragen statt vor Ort einloggen
+### Headless-Server: Login per Cookie-Import (empfohlen)
 
 Der sichtbare Login-Browser öffnet **auf dem Rechner, der das Backend ausführt** – nicht in deinem
-Chrome. Läuft das Backend headless (Server/Docker/Unraid, kein Bildschirm), kann dort kein Login-Fenster
-aufgehen. Dann der Weg über **Session-Übertragung** (beides im „Konto"-Screen):
+Chrome. Läuft das Backend headless (Server/Docker/Unraid, kein Bildschirm), kann dort kein
+Login-Fenster aufgehen. Übertrage die Anmeldung stattdessen aus deinem **eigenen** Browser:
 
-1. FastSell **einmal auf einem Rechner mit Bildschirm** starten (`npm run dev`) und dort einloggen –
-   das echte Browserfenster geht auf.
-2. **„Session exportieren"** → lädt `fastsell-session.json` herunter (`GET /api/login/export`).
-3. Auf dem Server **„Session-Datei importieren"** → hochladen (`POST /api/login/import`); die Session
-   wird serverseitig mit dem Server-Key verschlüsselt gespeichert. Danach postet der Server ohne Display.
+1. Auf dem Desktop bei **kleinanzeigen.de** ganz normal einloggen.
+2. Cookies mit der Erweiterung **[Cookie-Editor](https://cookie-editor.com)** exportieren
+   (Icon → *Export* → JSON). (Ein reiner `document.cookie`-Trick reicht nicht – die Login-Cookies
+   sind `httpOnly` und nur per Erweiterung/DevTools lesbar.)
+3. Im „Konto"-Screen **„Cookie-/Session-Datei importieren"** → Datei hochladen (`POST /api/login/import`).
+   Der Import erkennt sowohl das Cookie-Editor-Format als auch eine exportierte `fastsell-session.json`
+   und speichert die Session serverseitig verschlüsselt. Danach postet der Server ohne Display.
 
-> ⚠️ `fastsell-session.json` enthält deine Login-Cookies (≈ Passwort). Sicher übertragen, danach löschen.
+**Alternative** (wenn du FastSell auf einem Rechner **mit** Bildschirm laufen lässt): dort per
+„Jetzt einloggen" anmelden, **„Session exportieren"** (`GET /api/login/export`) und die
+`fastsell-session.json` auf dem Server importieren.
+
+> ⚠️ Die Datei enthält deine Login-Cookies (≈ Passwort). Sicher übertragen, danach löschen.
 
 Playwright-Browser (falls nicht vorhanden):
 

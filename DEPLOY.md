@@ -217,14 +217,16 @@ Die App sendet zusätzlich `X-Accel-Buffering: no` auf dem SSE-Stream, damit ngi
 (nicht in deinem Browser). Auf einem Server ohne Desktop kann dort kein Login-Fenster aufgehen –
 Fehler `Looks like you launched a headed browser without having a XServer running`.
 
-**Empfohlen – Session übertragen (im „Konto"-Screen, keine Shell nötig):**
+**Empfohlen – Login per Cookie-Import (im „Konto"-Screen, keine Shell/kein Display nötig):**
 
-1. FastSell **einmal auf einem Rechner mit Bildschirm** starten (`npm run dev`) und dort einloggen.
-2. **„Session exportieren"** → `fastsell-session.json` (`GET /api/login/export`).
-3. Auf dem Server **„Session-Datei importieren"** (`POST /api/login/import`) – fertig.
+1. Auf deinem Desktop bei kleinanzeigen.de ganz normal einloggen.
+2. Cookies mit der Erweiterung [Cookie-Editor](https://cookie-editor.com) exportieren (Export → JSON).
+3. Im „Konto"-Screen **„Cookie-/Session-Datei importieren"** (`POST /api/login/import`) – fertig. Der
+   Import akzeptiert das Cookie-Editor-Format **und** eine exportierte `fastsell-session.json`.
 
-Alternativen: die erzeugte `data/`-Session (inkl. `session.key`) direkt auf den Server kopieren, oder
-auf dem Server ein virtuelles Display (`xvfb-run`) + VNC nutzen, um vor Ort ein Captcha zu lösen.
+Alternativen: FastSell einmal auf einem Rechner **mit** Bildschirm laufen lassen, dort per „Jetzt
+einloggen" anmelden und per **„Session exportieren"** (`GET /api/login/export`) übertragen; die
+`data/`-Session (inkl. `session.key`) direkt auf den Server kopieren; oder dort `xvfb-run` + VNC nutzen.
 
 Die Session liegt AES-256-GCM-verschlüsselt unter `data/` (Key in `data/session.key` oder
 `FASTSELL_ENC_KEY`). `data/` und die exportierte `fastsell-session.json` enthalten die Login-Cookies

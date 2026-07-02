@@ -80,11 +80,71 @@ export async function exportStorageState(label = "default"): Promise<string | nu
   return state ? JSON.stringify(state) : null;
 }
 
-/** Grobe Plausibilitätsprüfung: sieht das nach einem Playwright-storageState aus? */
-export function isStorageStateLike(value: unknown): value is { cookies: unknown[] } {
-  return (
-    !!value &&
-    typeof value === "object" &&
-    Array.isArray((value as { cookies?: unknown }).cookies)
-  );
+// Playwright-storageState (vereinfacht) – so speichern wir die Session intern.
+export interface StorageState {
+  cookies: {
+    name: string;
+    value: string;
+    domain: string;
+    path: string;
+    expires: number;
+    httpOnly: boolean;
+    secure: boolean;
+    sameSite: "Strict" | "Lax" | "None";
+  }[];
+  origins: unknown[];
+}
+
+function normExpires(o: Record<string, unknown>): number {
+  if (typeof o.expires === "number") return Math.floor(o.expires); // Playwright-Format
+  if (typeof o.expirationDate === "number") return Math.floor(o.expirationDate); // Cookie-Editor
+  return -1; // Session-Cookie (kein Ablauf gespeichert)
+}
+
+function normSameSite(v: unknown): "Strict" | "Lax" | "None" {
+  const s = String(v ?? "").toLowerCase();
+  if (s === "strict") return "Strict";
+  if (s === "none" || s === "no_restriction") return "None";
+  return "Lax"; // Default (auch für "lax"/"unspecified"/leer)
+}
+
+/**
+ * Normalisiert eine hochgeladene Datei zu einem Playwright-storageState. Akzeptiert:
+ *  - einen kompletten Playwright-storageState (`{ cookies: [...], origins: [...] }`), oder
+ *  - ein reines Cookie-Array, wie es „Cookie-Editor"/„EditThisCookie" exportieren
+ *    (mit `expirationDate`, `sameSite: "no_restriction"` usw.).
+ * Gibt null zurück, wenn sich kein einziger gültiger Cookie extrahieren lässt.
+ */
+export function normalizeToStorageState(parsed: unknown): StorageState | null {
+  const asObj = parsed as { cookies?: unknown; origins?: unknown } | null;
+  const rawCookies: unknown[] = Array.isArray(parsed)
+    ? parsed
+    : asObj && typeof asObj === "object" && Array.isArray(asObj.cookies)
+      ? asObj.cookies
+      : [];
+
+  const cookies: StorageState["cookies"] = [];
+  for (const c of rawCookies) {
+    if (!c || typeof c !== "object") continue;
+    const o = c as Record<string, unknown>;
+    const name = typeof o.name === "string" ? o.name : "";
+    const value = typeof o.value === "string" ? o.value : "";
+    const domain = typeof o.domain === "string" ? o.domain : "";
+    if (!name || !domain) continue; // Name+Domain sind Pflicht; leerer Value ist erlaubt
+    cookies.push({
+      name,
+      value,
+      domain,
+      path: typeof o.path === "string" && o.path ? o.path : "/",
+      expires: normExpires(o),
+      httpOnly: !!o.httpOnly,
+      secure: !!o.secure,
+      sameSite: normSameSite(o.sameSite),
+    });
+  }
+  if (cookies.length === 0) return null;
+
+  const origins =
+    asObj && typeof asObj === "object" && Array.isArray(asObj.origins) ? asObj.origins : [];
+  return { cookies, origins };
 }

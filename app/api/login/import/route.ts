@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { isStorageStateLike, saveStorageState } from "@/lib/session";
+import { normalizeToStorageState, saveStorageState } from "@/lib/session";
 import type { LoginResult } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -28,14 +28,15 @@ export async function POST(req: Request) {
       return bad("Datei ist kein gültiges JSON. Bitte die per Export erzeugte Datei hochladen.");
     }
 
-    if (!isStorageStateLike(parsed)) {
+    const state = normalizeToStorageState(parsed);
+    if (!state) {
       return bad(
-        "Das sieht nicht nach einer FastSell-Session aus (erwartet: Playwright-storageState mit " +
-          "einem 'cookies'-Array). Bitte die exportierte fastsell-session.json verwenden.",
+        "Keine Cookies erkannt. Erwartet wird ein Cookie-Editor-Export (Cookie-Liste) oder die " +
+          "exportierte fastsell-session.json. Bitte auf kleinanzeigen.de eingeloggt exportieren.",
       );
     }
 
-    await saveStorageState(parsed, "default");
+    await saveStorageState(state, "default");
     const body: LoginResult = { ok: true };
     return NextResponse.json(body);
   } catch (err) {
