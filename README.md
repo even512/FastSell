@@ -64,6 +64,10 @@ Für den Betrieb hinter deinem nginx-Reverse-Proxy siehe **[DEPLOY.md](./DEPLOY.
 `docker compose up -d --build`. App läuft auf `127.0.0.1:3000`, nginx proxyt darauf. Ohne Docker geht
 es per `npm run build` + systemd-Service (ebenfalls in DEPLOY.md).
 
+**Unraid:** GitHub Actions (`.github/workflows/docker-publish.yml`) baut & pusht das Image (privat) zu
+Docker Hub; installiert wird per Template `unraid/fastsell.xml`. Schritt-für-Schritt in DEPLOY.md
+(Abschnitt „Unraid").
+
 Der `ANTHROPIC_API_KEY` wird **nur serverseitig** benutzt (nie im Browser) und gehört in eine
 gitignorierte Datei (`fastsell.env` bzw. `.env.production.local`) oder ein systemd-`EnvironmentFile` –
 **nicht** in committeten Code (sonst GitHub-Secret-Scanning → Widerruf).

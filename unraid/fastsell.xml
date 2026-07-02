@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>FastSell</Name>
+  <!-- WICHTIG: YOURDOCKERHUBUSER durch deinen Docker-Hub-Benutzernamen ersetzen -->
+  <Repository>YOURDOCKERHUBUSER/fastsell:latest</Repository>
+  <Registry>https://hub.docker.com/r/YOURDOCKERHUBUSER/fastsell</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/even512/FastSell</Support>
+  <Project>https://github.com/even512/FastSell</Project>
+  <Overview>FastSell: Fotos rein, verkaufsfertige Kleinanzeigen-Anzeige raus. Produkterkennung und natuerlicher Verkaufstext via Claude (Opus 4.8), Auto-Posting per Browser-Automation. Chromium ist im Image enthalten.</Overview>
+  <Category>Productivity: Tools:</Category>
+  <WebUI>http://[IP]:[PORT:3000]/</WebUI>
+  <TemplateURL/>
+  <Icon>https://raw.githubusercontent.com/even512/FastSell/claude/kleinanzeigen-auto-listing-f38zhp/public/icon-256.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Description>FastSell: Fotos rein, verkaufsfertige Kleinanzeigen-Anzeige raus. Laeuft als Node-Service (Next.js); Auto-Posting via Playwright/Chromium. Der API-Key wird nur serverseitig genutzt und ist im Browser nie sichtbar.</Description>
+  <Config Name="WebUI Port" Target="3000" Default="3000" Mode="tcp" Description="HTTP-Port der App (dahinter ggf. dein Reverse-Proxy)." Type="Port" Display="always" Required="true" Mask="false">3000</Config>
+  <Config Name="App-Daten" Target="/app/data" Default="/mnt/user/appdata/fastsell" Mode="rw" Description="Persistenz: Anzeigen-Historie + verschluesselte Login-Session." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/fastsell</Config>
+  <Config Name="ANTHROPIC_API_KEY" Target="ANTHROPIC_API_KEY" Default="" Mode="" Description="Anthropic API-Key. Nur serverseitig, nie im Browser." Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="FASTSELL_MODEL" Target="FASTSELL_MODEL" Default="claude-opus-4-8" Mode="" Description="Claude-Modell (Kostenhebel: claude-sonnet-5)." Type="Variable" Display="advanced" Required="false" Mask="false">claude-opus-4-8</Config>
+  <Config Name="FASTSELL_POSTER_HEADLESS" Target="FASTSELL_POSTER_HEADLESS" Default="true" Mode="" Description="Poster im Headless-Modus (im Container erforderlich)." Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+</Container>

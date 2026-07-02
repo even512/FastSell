@@ -41,6 +41,49 @@ Wer **kein** Docker will, nimmt den manuellen Weg unten.
 
 ---
 
+## Unraid (Docker Hub + Template)
+
+FastSell kann automatisch als Image zu Docker Hub gebaut und auf Unraid per Template installiert werden.
+
+### A) Image zu Docker Hub bauen (GitHub Actions)
+
+Die Pipeline `.github/workflows/docker-publish.yml` baut & pusht das Image (GitHub-Runner haben Netz).
+
+1. Docker-Hub Access-Token erstellen: Docker Hub → **Account Settings → Security → New Access Token**.
+2. In GitHub: **Repo → Settings → Secrets and variables → Actions** anlegen:
+   - `DOCKERHUB_USERNAME` = dein Docker-Hub-Benutzername
+   - `DOCKERHUB_TOKEN` = das Access-Token
+3. Auf Docker Hub das Repo `<user>/fastsell` anlegen und auf **Private** stellen.
+4. Pipeline auslösen: **Actions → „Docker Publish" → Run workflow** (Branch wählen), **oder** einen
+   Tag `vX.Y.Z` pushen. Ergebnis: `docker.io/<user>/fastsell:latest` (+ SHA-/Versions-Tags).
+
+### B) Auf Unraid installieren
+
+1. **Privates Image freigeben:** einmal per Unraid-Terminal einloggen, damit Unraid das private Image
+   ziehen darf:
+   ```bash
+   docker login -u <dein-dockerhub-user>
+   ```
+2. **Template einspielen:** `unraid/fastsell.xml` nach
+   `/boot/config/plugins/dockerMan/templates-user/my-FastSell.xml` kopieren
+   (im XML `YOURDOCKERHUBUSER` durch deinen Docker-Hub-User ersetzen). Dann in Unraid:
+   **Docker → Add Container →** oben unter „Template" **FastSell** wählen.
+3. **Werte prüfen/setzen:**
+   - `ANTHROPIC_API_KEY` (maskiert, Pflicht) – wird nur serverseitig genutzt.
+   - `App-Daten` → `/mnt/user/appdata/fastsell` (Historie + verschlüsselte Login-Session).
+   - `WebUI Port` → z. B. `3000`. Davor gehört dein Reverse-Proxy (SWAG / Nginx Proxy Manager) mit
+     TLS/Zugriffsschutz; für den SSE-Stream dort **`proxy_buffering off`** setzen.
+4. **Apply** → Container startet, WebUI unter `http://<unraid-ip>:3000/`.
+
+> **Login fürs Auto-Posting:** Der einmalige, sichtbare Login geht im Container nicht (kein Display).
+> Führe `/api/login` **einmal lokal** aus und kopiere den erzeugten `data/`-Inhalt nach
+> `/mnt/user/appdata/fastsell/`. Danach postet der Container mit dieser Session (headless).
+
+Der API-Key liegt nur in der Unraid-Container-Config (Env-Variable), **nicht** im Image und **nicht**
+in Git.
+
+---
+
 ## 1. Build & Start (ohne Docker)
 
 ```bash
