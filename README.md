@@ -58,11 +58,15 @@ Auf dem Handy: im selben Netz die LAN-IP des Rechners öffnen (z. B. `http://192
 
 ## Self-Hosting (nginx)
 
-Für den Betrieb hinter deinem nginx-Reverse-Proxy (Build, systemd-Service, SSE-taugliche
-nginx-Config, Key-Handling) siehe **[DEPLOY.md](./DEPLOY.md)**. Kurz: Der `ANTHROPIC_API_KEY` wird
-**nur serverseitig** benutzt (nie im Browser) und gehört in eine gitignorierte
-`.env.production.local` bzw. ein systemd-`EnvironmentFile` – **nicht** in committeten Code (sonst
-GitHub-Secret-Scanning → Widerruf).
+Für den Betrieb hinter deinem nginx-Reverse-Proxy siehe **[DEPLOY.md](./DEPLOY.md)**.
+
+**Am einfachsten mit Docker:** `cp fastsell.env.example fastsell.env` (Key eintragen) →
+`docker compose up -d --build`. App läuft auf `127.0.0.1:3000`, nginx proxyt darauf. Ohne Docker geht
+es per `npm run build` + systemd-Service (ebenfalls in DEPLOY.md).
+
+Der `ANTHROPIC_API_KEY` wird **nur serverseitig** benutzt (nie im Browser) und gehört in eine
+gitignorierte Datei (`fastsell.env` bzw. `.env.production.local`) oder ein systemd-`EnvironmentFile` –
+**nicht** in committeten Code (sonst GitHub-Secret-Scanning → Widerruf).
 
 ## Auto-Posting (einmaliger Login)
 

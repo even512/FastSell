@@ -10,7 +10,38 @@ Internet ── (dein gesicherter Reverse-Proxy / TLS) ──▶ nginx ──▶
 
 ---
 
-## 1. Build & Start
+## Docker (empfohlen – am einfachsten)
+
+Alles (Node, Build, Chromium, Key-Handling) ist gekapselt. Auf dem Server:
+
+```bash
+# 1. Projekt auf den Server bringen (git clone ODER Ordner per rsync/scp)
+#    Hinweis: fastsell.env & data/ sind gitignored -> kommen NICHT per git mit.
+cp fastsell.env.example fastsell.env      # entfällt, wenn du den Ordner mit fastsell.env rüberkopierst
+nano fastsell.env                          # ANTHROPIC_API_KEY eintragen
+
+# 2. Bauen & starten
+docker compose up -d --build
+
+# App läuft jetzt auf 127.0.0.1:3000  ->  nginx (unten) proxyt darauf
+docker compose logs -f
+```
+
+- **Key**: liegt in `fastsell.env` (gitignored, NICHT im Image – kommt zur Laufzeit via `env_file`).
+- **Persistenz**: `./data` ist als Volume gemountet (Historie + verschlüsselte Login-Session bleiben
+  über Neustarts erhalten).
+- **Port**: `127.0.0.1:3000` – nur lokal, davor dein nginx (Abschnitt 4).
+- **Login fürs Posten**: headful-Login geht im Container nicht (kein Display). Führe den Login einmal
+  lokal aus (`/api/login`) und kopiere den erzeugten `data/`-Inhalt ins Server-`data/`-Volume
+  (siehe Abschnitt 5).
+
+Update später: `git pull` (bzw. Ordner neu rsyncen) → `docker compose up -d --build`.
+
+Wer **kein** Docker will, nimmt den manuellen Weg unten.
+
+---
+
+## 1. Build & Start (ohne Docker)
 
 ```bash
 git clone <dein-repo> fastsell && cd fastsell

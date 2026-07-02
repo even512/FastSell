@@ -1,0 +1,15 @@
+services:
+  fastsell:
+    build: .
+    image: fastsell:latest
+    container_name: fastsell
+    restart: unless-stopped
+    # API-Key & Konfiguration – liegt in fastsell.env (gitignored, nicht im Image).
+    env_file:
+      - fastsell.env
+    ports:
+      # Nur lokal erreichbar – davor sitzt dein nginx-Reverse-Proxy.
+      - "127.0.0.1:3000:3000"
+    volumes:
+      # Persistenz: JSON-Store (Historie) + verschlüsselte Login-Session.
+      - ./data:/app/data

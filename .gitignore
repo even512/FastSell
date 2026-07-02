@@ -17,9 +17,10 @@ tsconfig.tsbuildinfo
 *.db
 *.db-journal
 
-# env
+# env / secrets
 .env
 .env*.local
+fastsell.env
 
 # misc
 .DS_Store

@@ -1,0 +1,23 @@
+# Dependencies & Build-Output (werden im Image neu erzeugt)
+node_modules
+.next
+out
+
+# Git
+.git
+.gitignore
+
+# Secrets & lokale Daten – dürfen NIE ins Image
+.env
+.env.*
+fastsell.env
+data
+
+# Logs / Temp
+*.log
+npm-debug.log*
+
+# Docker-Meta / Doku (im Image nicht nötig)
+Dockerfile
+docker-compose.yml
+.dockerignore
