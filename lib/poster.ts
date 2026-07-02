@@ -12,7 +12,11 @@ import type { PublishProgress, PublishRequest } from "./types";
 chromium.use(StealthPlugin());
 
 const BASE_URL = "https://www.kleinanzeigen.de";
-const NEW_AD_URL = `${BASE_URL}/p-anzeige-aufgeben-schritt2.html`;
+// Kanonischer Einstieg zum Anzeigen-Aufgeben (nicht der Legacy-„schritt2"-Deeplink);
+// per FASTSELL_NEW_AD_URL überschreibbar, falls Kleinanzeigen die URL ändert.
+const NEW_AD_URL = process.env.FASTSELL_NEW_AD_URL || `${BASE_URL}/p-anzeige-aufgeben.html`;
+// Felder sollen schnell scheitern (statt 30 s Default zu warten), wenn ein Selektor nicht passt.
+const FIELD_TIMEOUT = 8000;
 
 function execPath(): string | undefined {
   // Container: Chromium ist vorinstalliert. Sonst überschreibbar per ENV.
@@ -73,13 +77,82 @@ export async function screenshotDataUrl(page: Page): Promise<string | undefined>
   }
 }
 
+/** Fehler in einem konkreten Schritt (mit Schritt-Kennung für die UI). */
+class StepError extends Error {
+  constructor(
+    public step: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** Wartet kurz auf ein Pflicht-Element und wirft bei Fehlen einen klaren StepError. */
+async function requireEl(
+  page: Page,
+  selector: string,
+  step: string,
+  human: string,
+  state: "visible" | "attached" = "visible",
+) {
+  const el = page.locator(selector).first();
+  try {
+    await el.waitFor({ state, timeout: FIELD_TIMEOUT });
+  } catch {
+    throw new StepError(
+      step,
+      `„${human}" nicht gefunden (Selektor \`${selector}\`). Die Kleinanzeigen-Seite hat sich ` +
+        "vermutlich geändert – die technische Diagnose unten zeigt die tatsächlich vorhandenen Felder.",
+    );
+  }
+  return el;
+}
+
+/**
+ * Kompakte Beschreibung der aktuellen Seite (URL + sichtbare Formularfelder). Damit lassen sich
+ * bei einem Fehlschlag die korrekten Selektoren ableiten, ohne die Live-Seite selbst zu sehen.
+ */
+async function describeForm(page: Page): Promise<string> {
+  try {
+    const info = await page.evaluate(() => {
+      const controls = Array.from(document.querySelectorAll("input, textarea, select, button"));
+      const rows = controls
+        .filter((el) => (el as HTMLElement).offsetParent !== null || el.getAttribute("type") === "file")
+        .slice(0, 40)
+        .map((el) => {
+          const type = el.getAttribute("type") || "";
+          const id = (el as HTMLElement).id || "";
+          const name = el.getAttribute("name") || "";
+          const ph = el.getAttribute("placeholder") || "";
+          const label = (el.getAttribute("aria-label") || el.textContent || "")
+            .trim()
+            .replace(/\s+/g, " ")
+            .slice(0, 40);
+          return (
+            `${el.tagName.toLowerCase()}${type ? `[${type}]` : ""} ` +
+            `id=${id || "-"} name=${name || "-"}${ph ? ` ph="${ph}"` : ""}${label ? ` · ${label}` : ""}`
+          );
+        });
+      return { url: location.href, title: document.title, total: controls.length, rows };
+    });
+    return [
+      `URL: ${info.url}`,
+      `Seitentitel: ${info.title}`,
+      `Sichtbare Formularelemente (von ${info.total} gesamt):`,
+      ...info.rows,
+    ].join("\n");
+  } catch (e) {
+    return `Diagnose nicht möglich: ${(e as Error).message}`;
+  }
+}
+
 /**
  * Stellt eine Anzeige über Browser-Automation ein.
  *
- * Hinweis: Kleinanzeigen hat keine offene API und ist Akamai-geschützt. Die
- * Selektoren sind aus dem Community-Projekt `Second-Hand-Friends/kleinanzeigen-bot`
- * portiert und müssen gegen die aktuelle Seite validiert werden. Jeder Schritt ist
- * abgesichert; bei Captcha/Bot-Wall wird pausiert statt hart abgebrochen.
+ * Kleinanzeigen hat keine offene API und ist Akamai-geschützt; das Formular ändert sich zudem
+ * regelmäßig. Darum bricht der Poster bei fehlenden Pflichtfeldern **schnell und ehrlich** ab
+ * (statt still weiterzulaufen und fälschlich „veröffentlicht" zu melden) und liefert einen
+ * Screenshot + eine Feld-Diagnose, mit der sich die Selektoren nachziehen lassen.
  */
 export async function publishListing(
   req: PublishRequest,
@@ -91,7 +164,7 @@ export async function publishListing(
       step: "login",
       status: "action_required",
       message:
-        "Kein Kleinanzeigen-Login gespeichert. Bitte zuerst einmalig einloggen (Login-Schritt).",
+        "Kein Kleinanzeigen-Login gespeichert. Bitte zuerst einmalig einloggen (Konto-Screen).",
     });
     return;
   }
@@ -99,7 +172,15 @@ export async function publishListing(
   const headless = process.env.FASTSELL_POSTER_HEADLESS !== "false";
   let browser: Browser | null = null;
   let context: BrowserContext | null = null;
+  let page: Page | null = null;
   const tempFiles: string[] = [];
+
+  // Ehrlicher Fehlschlag inkl. Screenshot + Formular-Diagnose.
+  async function reportFailure(step: string, message: string): Promise<void> {
+    const screenshot = page ? await screenshotDataUrl(page) : undefined;
+    const details = page ? await describeForm(page) : undefined;
+    onProgress({ step, status: "error", message, screenshot, details });
+  }
 
   try {
     onProgress({ step: "start", status: "running", message: "Browser wird gestartet …" });
@@ -109,88 +190,103 @@ export async function publishListing(
       locale: "de-DE",
       viewport: { width: 1280, height: 900 },
     });
-    const page = await context.newPage();
+    page = await context.newPage();
 
     onProgress({ step: "navigate", status: "running", message: "Öffne die Seite zum Anzeigen-Aufgeben …" });
-    await page.goto(NEW_AD_URL, { waitUntil: "domcontentloaded" });
+    await page.goto(NEW_AD_URL, { waitUntil: "domcontentloaded", timeout: 45_000 });
     await randomDelay();
 
     if (await isBlocked(page)) {
+      const screenshot = await screenshotDataUrl(page);
       onProgress({
         step: "captcha",
         status: "action_required",
         message:
-          "Kleinanzeigen zeigt eine Sicherheitsabfrage (Captcha). Bitte im geöffneten Browser lösen und erneut versuchen.",
+          "Kleinanzeigen zeigt eine Sicherheitsabfrage/Bot-Wall (Screenshot unten). Automatisches " +
+          "Einstellen ist dann nicht möglich – ggf. später erneut oder mit weniger Automatisierung.",
+        screenshot,
       });
       return;
     }
 
-    // Titel
+    // Titel (Pflicht) – zugleich der Check, ob wir überhaupt im Formular gelandet sind.
     onProgress({ step: "title", status: "running", message: "Titel wird eingetragen …" });
-    await page.fill("#postad-title", req.title).catch(() => {});
+    const titleEl = await requireEl(page, "#postad-title", "title", "Titel-Feld");
+    await titleEl.fill(req.title, { timeout: FIELD_TIMEOUT });
     await randomDelay(200, 600);
 
-    // Beschreibung
+    // Beschreibung (Pflicht)
     onProgress({ step: "description", status: "running", message: "Beschreibung wird eingetragen …" });
-    await page.fill("#pstad-descrptn", req.description).catch(() => {});
+    const descEl = await requireEl(page, "#pstad-descrptn", "description", "Beschreibungs-Feld");
+    await descEl.fill(req.description, { timeout: FIELD_TIMEOUT });
     await randomDelay(200, 600);
 
     // Preis + Preistyp
     onProgress({ step: "price", status: "running", message: "Preis wird gesetzt …" });
     if (req.priceType === "FREE") {
-      await page.check("#radio-pricetype-GIVE_AWAY").catch(() => {});
+      await page.locator("#radio-pricetype-GIVE_AWAY").first().check({ timeout: FIELD_TIMEOUT }).catch(() => {});
     } else {
       const euro = Math.round(req.priceCents / 100).toString();
-      await page.fill("#pstad-price", euro).catch(() => {});
+      const priceEl = await requireEl(page, "#pstad-price", "price", "Preis-Feld");
+      await priceEl.fill(euro, { timeout: FIELD_TIMEOUT });
       const typeSel =
         req.priceType === "FIXED" ? "#radio-pricetype-FIXED" : "#radio-pricetype-NEGOTIABLE";
-      await page.check(typeSel).catch(() => {});
+      await page.locator(typeSel).first().check({ timeout: FIELD_TIMEOUT }).catch(() => {});
     }
     await randomDelay(200, 600);
 
-    // Fotos hochladen
+    // Fotos hochladen (verstecktes File-Input → auf "attached" statt "visible" warten)
     onProgress({ step: "photos", status: "running", message: `${req.photos.length} Foto(s) werden hochgeladen …` });
     const files = req.photos.map((dataUrl, i) => {
       const f = writeTempPhoto(dataUrl, i);
       tempFiles.push(f);
       return f;
     });
-    // Kleinanzeigen nutzt ein verstecktes File-Input für den Foto-Upload.
-    const fileInput = page.locator('input[type="file"]').first();
-    await fileInput.setInputFiles(files).catch(() => {});
-    // dem Upload etwas Zeit geben
+    const fileInput = await requireEl(page, 'input[type="file"]', "photos", "Foto-Upload-Feld", "attached");
+    await fileInput.setInputFiles(files, { timeout: FIELD_TIMEOUT });
     await randomDelay(1500, 3000);
 
     // Absenden
     onProgress({ step: "submit", status: "running", message: "Anzeige wird veröffentlicht …" });
-    await page.click("#pstad-submit").catch(() => {});
+    const submitEl = await requireEl(page, "#pstad-submit", "submit", "Veröffentlichen-Button");
+    await submitEl.click({ timeout: FIELD_TIMEOUT });
     await page.waitForLoadState("domcontentloaded").catch(() => {});
-    await randomDelay(1000, 2000);
+    await randomDelay(1500, 3000);
 
     if (await isBlocked(page)) {
+      const screenshot = await screenshotDataUrl(page);
       onProgress({
         step: "captcha",
         status: "action_required",
-        message: "Beim Absenden erschien eine Sicherheitsabfrage. Bitte im Browser lösen.",
+        message: "Beim Absenden erschien eine Sicherheitsabfrage/Bot-Wall (Screenshot unten).",
+        screenshot,
       });
       return;
     }
 
+    // Erfolg VERIFIZIEREN statt behaupten: sind wir aus dem Formular raus?
+    onProgress({ step: "verify", status: "running", message: "Veröffentlichung wird geprüft …" });
+    const stillOnForm = await page.locator("#postad-title").count().catch(() => 1);
     const finalUrl = page.url();
-    onProgress({
-      step: "done",
-      status: "done",
-      message: "Anzeige wurde eingestellt.",
-      url: finalUrl,
-    });
+    const published = stillOnForm === 0 && !/anzeige-aufgeben/i.test(finalUrl);
+    if (!published) {
+      await reportFailure(
+        "verify",
+        "Das Absenden wurde ausgelöst, aber die Veröffentlichung ließ sich nicht bestätigen (die " +
+          "Seite blieb im Formular). Es wurde vermutlich nichts eingestellt – Screenshot + Diagnose " +
+          "unten. Falls die Anzeige doch erscheint, sag Bescheid, dann justiere ich die Erfolgsprüfung.",
+      );
+      return;
+    }
+
+    onProgress({ step: "done", status: "done", message: "Anzeige wurde eingestellt.", url: finalUrl });
   } catch (err) {
-    onProgress({
-      step: "error",
-      status: "error",
-      message: `Fehler beim Einstellen: ${(err as Error).message}`,
-    });
+    if (err instanceof StepError) {
+      await reportFailure(err.step, err.message);
+    } else {
+      await reportFailure("error", `Unerwarteter Fehler beim Einstellen: ${(err as Error).message}`);
+    }
   } finally {
-    // Aufräumen
     for (const f of tempFiles) {
       try {
         fs.rmSync(path.dirname(f), { recursive: true, force: true });

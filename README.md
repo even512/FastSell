@@ -46,6 +46,7 @@ Auf dem Handy: im selben Netz die LAN-IP des Rechners öffnen (z. B. `http://192
 | `FASTSELL_MODEL` | Modell-Override | `claude-opus-4-8` |
 | `FASTSELL_ENC_KEY` | 32-Byte-Hex-Key für Login-Verschlüsselung | auto in `data/session.key` |
 | `FASTSELL_POSTER_HEADLESS` | Poster headless (`true`/`false`) | `false` |
+| `FASTSELL_NEW_AD_URL` | Einstieg-URL zum Anzeigen-Aufgeben (Override) | Kleinanzeigen-Standard |
 | `FASTSELL_LOGIN_HEADLESS` | Login kopflos (`true` für Test/Server ohne Display) | `false` |
 | `FASTSELL_LOGIN_TIMEOUT_MS` | Wartezeit auf den manuellen Login | `180000` |
 | `PLAYWRIGHT_CHROMIUM` | Pfad zu Chromium (optional) | Playwright-Default |

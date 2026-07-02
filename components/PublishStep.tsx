@@ -108,6 +108,36 @@ export function PublishStep({
         </ol>
       )}
 
+      {(() => {
+        const shot = [...events].reverse().find((e) => e.screenshot)?.screenshot;
+        const details = [...events].reverse().find((e) => e.details)?.details;
+        if (!shot && !details) return null;
+        return (
+          <div className="space-y-2">
+            {shot && (
+              <div className="space-y-1">
+                <p className="text-xs text-gray-500">Screenshot beim Abbruch:</p>
+                <img
+                  src={shot}
+                  alt="Screenshot der Seite beim Abbruch"
+                  className="w-full rounded-lg border"
+                />
+              </div>
+            )}
+            {details && (
+              <details className="rounded-lg border bg-gray-50 p-3">
+                <summary className="cursor-pointer text-xs font-medium text-gray-600">
+                  Technische Diagnose (zum Kopieren &amp; Schicken)
+                </summary>
+                <pre className="mt-2 overflow-x-auto whitespace-pre-wrap font-mono text-[11px] text-gray-700">
+                  {details}
+                </pre>
+              </details>
+            )}
+          </div>
+        );
+      })()}
+
       {state === "done" && (
         <div className="space-y-3 rounded-xl bg-brand-light p-4">
           <p className="font-semibold text-brand-dark">Anzeige wurde eingestellt. 🎉</p>

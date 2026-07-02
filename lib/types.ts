@@ -60,6 +60,8 @@ export interface PublishProgress {
   message: string;
   status: "running" | "done" | "error" | "action_required";
   url?: string;
+  screenshot?: string; // data:image/png;base64,... – bei Fehler/Blockade
+  details?: string; // technische Diagnose (z. B. gefundene Formularfelder) zum Weitergeben
 }
 
 // Status-Antwort von GET /api/login
