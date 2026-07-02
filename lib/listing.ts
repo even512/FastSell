@@ -24,8 +24,10 @@ const ListingSchema = z.object({
       'Passende Kleinanzeigen-Kategorie als Pfad, z. B. "Elektronik > Handys & Telefone" oder "Mode & Beauty > Damenmode".',
     ),
   zustand: z
-    .enum(["Neu", "Sehr gut", "Gut", "In Ordnung", "Defekt"])
-    .describe("Zustand des Artikels anhand der Fotos."),
+    .string()
+    .describe(
+      'Zustand des Artikels anhand der Fotos. Genau einer von: "Neu", "Sehr gut", "Gut", "In Ordnung", "Defekt".',
+    ),
   attribute: z
     .array(AttributeSchema)
     .describe("2–6 wichtige, aus den Fotos ersichtliche Produktmerkmale."),
@@ -60,6 +62,24 @@ export async function generateListing(
   images: { mediaType: string; base64: string }[],
 ): Promise<ListingDraft> {
   if (images.length === 0) throw new Error("Keine Bilder übergeben.");
+
+  // Demo-/Dev-Modus ohne API-Key: deterministischer Platzhalter-Entwurf,
+  // damit der komplette Flow ohne Claude durchklickbar/testbar ist.
+  if (process.env.FASTSELL_MOCK === "1") {
+    return {
+      titel: "Beispielartikel (Demo-Modus)",
+      marke: "",
+      modell: "",
+      kategorie: "Sonstiges > Weitere Kategorien",
+      zustand: "Gut",
+      attribute: [
+        { label: "Zustand", wert: "Gut" },
+        { label: "Hinweis", wert: "Demo ohne KI" },
+      ],
+      beschreibung:
+        "Dies ist ein Demo-Entwurf ohne Produkterkennung. Trage einen ANTHROPIC_API_KEY in .env ein, damit die App das Produkt aus den Fotos erkennt und einen echten Verkaufstext schreibt.",
+    };
+  }
 
   const client = new Anthropic(); // liest ANTHROPIC_API_KEY / ant-Profil aus der Umgebung
 

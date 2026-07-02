@@ -6,6 +6,11 @@ type VariantChoice = "optimized" | "cutout";
 
 const CONDITIONS = ["Neu", "Sehr gut", "Gut", "In Ordnung", "Defekt"];
 
+function conditionOptions(current: string): string[] {
+  // abweichenden vom Modell gelieferten Wert trotzdem anzeigbar machen
+  return CONDITIONS.includes(current) ? CONDITIONS : [current, ...CONDITIONS];
+}
+
 export function ReviewStep({
   photos,
   variant,
@@ -111,7 +116,7 @@ export function ReviewStep({
             onChange={(e) => patch({ zustand: e.target.value })}
             className="w-full rounded-lg border bg-white px-3 py-2 text-sm"
           >
-            {CONDITIONS.map((c) => (
+            {conditionOptions(listing.zustand).map((c) => (
               <option key={c}>{c}</option>
             ))}
           </select>

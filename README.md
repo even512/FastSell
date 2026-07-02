@@ -47,6 +47,12 @@ Auf dem Handy: im selben Netz die LAN-IP des Rechners öffnen (z. B. `http://192
 | `FASTSELL_ENC_KEY` | 32-Byte-Hex-Key für Login-Verschlüsselung | auto in `data/session.key` |
 | `FASTSELL_POSTER_HEADLESS` | Poster headless (`true`/`false`) | `false` |
 | `PLAYWRIGHT_CHROMIUM` | Pfad zu Chromium (optional) | Playwright-Default |
+| `FASTSELL_MOCK` | `1` = Demo ohne KI (Platzhalter-Entwurf, kein API-Key nötig) | – |
+
+> **Demo ohne API-Key:** `FASTSELL_MOCK=1 npm run dev` lässt den kompletten Flow (Fotos →
+> Bildaufbereitung → Entwurf → Preis → Einstellen) durchklicken, ohne Claude aufzurufen – nützlich
+> zum Ausprobieren der Oberfläche. Für echte Produkterkennung `FASTSELL_MOCK` weglassen und
+> `ANTHROPIC_API_KEY` setzen.
 
 ---
 
