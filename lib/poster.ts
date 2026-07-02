@@ -42,15 +42,35 @@ function writeTempPhoto(dataUrl: string, idx: number): string {
   return file;
 }
 
-/** Erkennt Bot-Wall / Captcha grob anhand von URL und typischen Selektoren. */
-async function isBlocked(page: Page): Promise<boolean> {
+/** Erkennt Bot-Wall / Captcha grob anhand von URL, Captcha-Selektoren und Seitentext. */
+export async function isBlocked(page: Page): Promise<boolean> {
   const url = page.url();
   if (/captcha|challenge|blocked|geoblocked/i.test(url)) return true;
+  // Bekannte Captcha-Container / iframes.
   const captcha = await page
     .locator('iframe[src*="captcha"], iframe[title*="captcha" i], #captcha, .g-recaptcha')
     .count()
     .catch(() => 0);
-  return captcha > 0;
+  if (captcha > 0) return true;
+  // Akamai Bot Manager / „Access Denied"-Seiten erkennt man am Seitentext.
+  const html = await page.content().catch(() => "");
+  return /Zugriff verweigert|Access Denied|Reference #\d|Pardon Our Interruption|Bot Manager/i.test(
+    html,
+  );
+}
+
+/**
+ * Best-effort-Screenshot der aktuellen Seite als PNG-data-URL (Viewport, nicht Full-Page,
+ * damit die Antwort klein bleibt). Gibt undefined zurück, wenn kein Screenshot möglich ist
+ * (z. B. Seite bereits geschlossen) – wirft nie.
+ */
+export async function screenshotDataUrl(page: Page): Promise<string | undefined> {
+  try {
+    const buf = await page.screenshot({ type: "png" });
+    return `data:image/png;base64,${buf.toString("base64")}`;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

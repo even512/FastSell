@@ -46,6 +46,8 @@ Auf dem Handy: im selben Netz die LAN-IP des Rechners öffnen (z. B. `http://192
 | `FASTSELL_MODEL` | Modell-Override | `claude-opus-4-8` |
 | `FASTSELL_ENC_KEY` | 32-Byte-Hex-Key für Login-Verschlüsselung | auto in `data/session.key` |
 | `FASTSELL_POSTER_HEADLESS` | Poster headless (`true`/`false`) | `false` |
+| `FASTSELL_LOGIN_HEADLESS` | Login kopflos (`true` für Test/Server ohne Display) | `false` |
+| `FASTSELL_LOGIN_TIMEOUT_MS` | Wartezeit auf den manuellen Login | `180000` |
 | `PLAYWRIGHT_CHROMIUM` | Pfad zu Chromium (optional) | Playwright-Default |
 | `FASTSELL_MOCK` | `1` = Demo ohne KI (Platzhalter-Entwurf, kein API-Key nötig) | – |
 
@@ -74,10 +76,16 @@ gitignorierte Datei (`fastsell.env` bzw. `.env.production.local`) oder ein syste
 
 ## Auto-Posting (einmaliger Login)
 
-Das Einstellen braucht einen gespeicherten Kleinanzeigen-Login. `POST /api/login` öffnet einen
-sichtbaren Browser; dort einmal einloggen (inkl. evtl. Sicherheitsabfrage). Die Session wird
-**AES-256-GCM-verschlüsselt** lokal gespeichert (kein Passwort im Klartext). Danach postet
-`/api/publish` mit dieser Session.
+Das Einstellen braucht einen gespeicherten Kleinanzeigen-Login. Im **„Konto"-Screen** (Button oben
+rechts) startest du ihn: `POST /api/login` öffnet einen sichtbaren Browser; dort einmal einloggen
+(inkl. evtl. Sicherheitsabfrage). Die Session wird **AES-256-GCM-verschlüsselt** lokal gespeichert
+(kein Passwort im Klartext). Danach postet `/api/publish` mit dieser Session.
+
+Der Login **crasht nicht**, wenn etwas schiefläuft: Zeigt Kleinanzeigen statt der Login-Seite eine
+Bot-Wall/Sicherheitsabfrage (typisch von Server-/Rechenzentrums-IPs) oder läuft die Wartezeit ab,
+liefert die Route einen klaren **Grund + Screenshot** der Seite zurück – der „Konto"-Screen zeigt
+beides an. `FASTSELL_LOGIN_HEADLESS=true` erlaubt einen kopflosen Testlauf ohne Display,
+`FASTSELL_LOGIN_TIMEOUT_MS` überschreibt die Wartezeit (Default 3 Min).
 
 Playwright-Browser (falls nicht vorhanden):
 
@@ -95,9 +103,9 @@ app/
   api/analyze/route.ts     Fotos -> Bildpipeline + Claude -> Anzeigen-Entwurf
   api/price/route.ts       Preis-Check (Vergleichs-Listings)
   api/publish/route.ts     Auto-Posting (SSE-Fortschritt)
-  api/login/route.ts       Einmaliger Login -> verschlüsselte Session
+  api/login/route.ts       Einmaliger Login -> verschlüsselte Session (Fehlschlag: Grund + Screenshot)
   api/listings/route.ts    Anzeigen-Historie
-components/                CaptureStep, ReviewStep, PriceStep, PublishStep, HistoryList
+components/                CaptureStep, ReviewStep, PriceStep, PublishStep, HistoryList, AccountPanel
 lib/
   images.ts                sharp-Optimierung + Freisteller (optional @imgly)
   listing.ts               Claude Vision (beta.messages.parse + Zod)
