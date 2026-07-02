@@ -87,6 +87,20 @@ liefert die Route einen klaren **Grund + Screenshot** der Seite zurück – der 
 beides an. `FASTSELL_LOGIN_HEADLESS=true` erlaubt einen kopflosen Testlauf ohne Display,
 `FASTSELL_LOGIN_TIMEOUT_MS` überschreibt die Wartezeit (Default 3 Min).
 
+### Headless-Server: Session übertragen statt vor Ort einloggen
+
+Der sichtbare Login-Browser öffnet **auf dem Rechner, der das Backend ausführt** – nicht in deinem
+Chrome. Läuft das Backend headless (Server/Docker/Unraid, kein Bildschirm), kann dort kein Login-Fenster
+aufgehen. Dann der Weg über **Session-Übertragung** (beides im „Konto"-Screen):
+
+1. FastSell **einmal auf einem Rechner mit Bildschirm** starten (`npm run dev`) und dort einloggen –
+   das echte Browserfenster geht auf.
+2. **„Session exportieren"** → lädt `fastsell-session.json` herunter (`GET /api/login/export`).
+3. Auf dem Server **„Session-Datei importieren"** → hochladen (`POST /api/login/import`); die Session
+   wird serverseitig mit dem Server-Key verschlüsselt gespeichert. Danach postet der Server ohne Display.
+
+> ⚠️ `fastsell-session.json` enthält deine Login-Cookies (≈ Passwort). Sicher übertragen, danach löschen.
+
 Playwright-Browser (falls nicht vorhanden):
 
 ```bash
@@ -104,6 +118,8 @@ app/
   api/price/route.ts       Preis-Check (Vergleichs-Listings)
   api/publish/route.ts     Auto-Posting (SSE-Fortschritt)
   api/login/route.ts       Einmaliger Login -> verschlüsselte Session (Fehlschlag: Grund + Screenshot)
+  api/login/export/route.ts  Session als Datei herunterladen (Übertragung auf headless Server)
+  api/login/import/route.ts  Session-Datei hochladen -> serverseitig verschlüsselt speichern
   api/listings/route.ts    Anzeigen-Historie
 components/                CaptureStep, ReviewStep, PriceStep, PublishStep, HistoryList, AccountPanel
 lib/

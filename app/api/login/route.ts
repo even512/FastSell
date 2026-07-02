@@ -17,7 +17,12 @@ const DEBUG_SHOT = path.join(process.cwd(), "data", "login-debug.png");
 // Anzeige im Konto-Screen auf die erste, lesbare Zeile reduzieren.
 const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 function cleanError(msg: string): string {
-  return msg.replace(ANSI, "").split(/\r?\nCall log:/)[0].trim() || "Login fehlgeschlagen.";
+  return (
+    msg
+      .replace(ANSI, "")
+      .split(/\r?\n(?:Call log|Browser logs):/)[0]
+      .trim() || "Login fehlgeschlagen."
+  );
 }
 
 // Status: ist ein Login gespeichert?
@@ -124,12 +129,15 @@ export async function POST() {
     const body: LoginResult = { ok: true };
     return NextResponse.json(body);
   } catch (err) {
-    const raw = cleanError((err as Error).message || "Login fehlgeschlagen.");
-    // Häufiger Fall: headful ohne Display auf einem Server → freundlicher Hinweis.
-    const friendly = /display|x server|missing x|xvfb/i.test(raw)
-      ? "Kein Display für einen sichtbaren Browser vorhanden. Den Login lokal (mit Desktop) " +
-        "ausführen oder für einen kopflosen Testlauf FASTSELL_LOGIN_HEADLESS=true setzen. " +
-        `(${raw})`
+    const rawFull = (err as Error).message || "Login fehlgeschlagen.";
+    const raw = cleanError(rawFull);
+    // Häufigster Fall auf einem Server: der sichtbare Browser soll auf dem Backend-Host öffnen,
+    // der aber kein Display hat. Klar erklären und auf Session-Export/Import verweisen.
+    const noDisplay = /display|xserver|x server|missing x|xvfb/i.test(rawFull);
+    const friendly = noDisplay
+      ? "Der sichtbare Login-Browser öffnet auf dem Rechner, der das Backend ausführt – dieser hat " +
+        "kein Display (headless Server/Docker). Logge dich auf einem Rechner mit Bildschirm ein und " +
+        "übertrage die Session unten per „Session übertragen“ (Export/Import)."
       : raw;
     return await fail(friendly, 500);
   }

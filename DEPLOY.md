@@ -213,15 +213,22 @@ Die App sendet zusätzlich `X-Accel-Buffering: no` auf dem SSE-Stream, damit ngi
 
 ## 5. Login fürs Auto-Posting
 
-`POST /api/login` öffnet einen **sichtbaren** Browser zum einmaligen Einloggen. Auf einem
-Server ohne Desktop dafür entweder:
+`POST /api/login` öffnet einen **sichtbaren** Browser **auf dem Rechner, der das Backend ausführt**
+(nicht in deinem Browser). Auf einem Server ohne Desktop kann dort kein Login-Fenster aufgehen –
+Fehler `Looks like you launched a headed browser without having a XServer running`.
 
-- den Login **einmal lokal** (mit Desktop) durchführen und die erzeugte `data/`-Session auf den
-  Server kopieren, oder
-- auf dem Server ein virtuelles Display nutzen (`xvfb-run`), falls dort ein Captcha lösbar ist.
+**Empfohlen – Session übertragen (im „Konto"-Screen, keine Shell nötig):**
+
+1. FastSell **einmal auf einem Rechner mit Bildschirm** starten (`npm run dev`) und dort einloggen.
+2. **„Session exportieren"** → `fastsell-session.json` (`GET /api/login/export`).
+3. Auf dem Server **„Session-Datei importieren"** (`POST /api/login/import`) – fertig.
+
+Alternativen: die erzeugte `data/`-Session (inkl. `session.key`) direkt auf den Server kopieren, oder
+auf dem Server ein virtuelles Display (`xvfb-run`) + VNC nutzen, um vor Ort ein Captcha zu lösen.
 
 Die Session liegt AES-256-GCM-verschlüsselt unter `data/` (Key in `data/session.key` oder
-`FASTSELL_ENC_KEY`). `data/` gehört gesichert und **nicht** ins Git.
+`FASTSELL_ENC_KEY`). `data/` und die exportierte `fastsell-session.json` enthalten die Login-Cookies
+(≈ Passwort) – gesichert behandeln und **nicht** ins Git.
 
 ---
 

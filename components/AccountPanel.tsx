@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { type ChangeEvent, useEffect, useState } from "react";
 import type { LoginResult, LoginStatus } from "@/lib/types";
 
 // „Konto"-Screen: zeigt den Login-Status und startet den einmaligen Kleinanzeigen-Login.
@@ -10,6 +10,8 @@ export function AccountPanel() {
   const [hasSession, setHasSession] = useState<boolean | null>(null);
   const [state, setState] = useState<"idle" | "running" | "done" | "error">("idle");
   const [result, setResult] = useState<LoginResult | null>(null);
+  const [importState, setImportState] = useState<"idle" | "running" | "done" | "error">("idle");
+  const [importMsg, setImportMsg] = useState<string | null>(null);
 
   async function refresh() {
     try {
@@ -41,6 +43,34 @@ export function AccountPanel() {
     } catch (e) {
       setResult({ ok: false, reason: (e as Error).message });
       setState("error");
+    }
+  }
+
+  async function onImportFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // erlaubt, dieselbe Datei erneut zu wählen
+    if (!file) return;
+    setImportState("running");
+    setImportMsg(null);
+    try {
+      const text = await file.text();
+      const res = await fetch("/api/login/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: text,
+      });
+      const data = (await res.json()) as LoginResult;
+      if (data.ok) {
+        setImportState("done");
+        setImportMsg("Session importiert – der Server kann jetzt Anzeigen einstellen.");
+        refresh();
+      } else {
+        setImportState("error");
+        setImportMsg(data.reason || "Import fehlgeschlagen.");
+      }
+    } catch (err) {
+      setImportState("error");
+      setImportMsg((err as Error).message);
     }
   }
 
@@ -115,6 +145,48 @@ export function AccountPanel() {
           </button>
         </div>
       )}
+
+      {/* Session zwischen Rechnern übertragen (für headless Server ohne Bildschirm) */}
+      <div className="space-y-3 border-t pt-5">
+        <h3 className="text-sm font-semibold text-gray-700">Session übertragen</h3>
+        <p className="text-sm text-gray-500">
+          Läuft das Backend headless (Server/Docker, kein Bildschirm)? Dann logge dich einmal auf
+          einem Rechner <strong>mit Bildschirm</strong> ein (dort öffnet sich ein echtes
+          Browserfenster), <strong>exportiere</strong> die Session und <strong>importiere</strong>{" "}
+          sie hier auf dem Server.
+        </p>
+
+        {hasSession && (
+          <a
+            href="/api/login/export"
+            download="fastsell-session.json"
+            className="block w-full rounded-xl border border-brand py-3 text-center font-semibold text-brand"
+          >
+            Session exportieren
+          </a>
+        )}
+
+        <label className="block w-full cursor-pointer rounded-xl border py-3 text-center font-medium text-gray-600 hover:bg-gray-50">
+          {importState === "running" ? "Importiere …" : "Session-Datei importieren"}
+          <input
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={onImportFile}
+          />
+        </label>
+
+        {importMsg && (
+          <p className={`text-sm ${importState === "error" ? "text-red-700" : "text-brand-dark"}`}>
+            {importMsg}
+          </p>
+        )}
+
+        <p className="text-xs text-gray-400">
+          Die Datei enthält deine Login-Cookies – wie ein Passwort behandeln, nur über einen sicheren
+          Weg übertragen und danach löschen.
+        </p>
+      </div>
     </div>
   );
 }

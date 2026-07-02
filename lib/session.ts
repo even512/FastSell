@@ -68,3 +68,23 @@ export async function loadStorageState(label = "default"): Promise<unknown | nul
 export async function hasSession(label = "default"): Promise<boolean> {
   return getSession(label) !== null;
 }
+
+/**
+ * Exportiert den entschlüsselten storageState als JSON-String (oder null, wenn kein Login
+ * gespeichert ist). Für die Übertragung von einem Rechner mit Bildschirm (dort einloggen)
+ * auf einen headless Server. Achtung: enthält die Login-Cookies im Klartext – wie ein Passwort
+ * behandeln.
+ */
+export async function exportStorageState(label = "default"): Promise<string | null> {
+  const state = await loadStorageState(label);
+  return state ? JSON.stringify(state) : null;
+}
+
+/** Grobe Plausibilitätsprüfung: sieht das nach einem Playwright-storageState aus? */
+export function isStorageStateLike(value: unknown): value is { cookies: unknown[] } {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    Array.isArray((value as { cookies?: unknown }).cookies)
+  );
+}
