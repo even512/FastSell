@@ -61,3 +61,16 @@ export interface PublishProgress {
   status: "running" | "done" | "error" | "action_required";
   url?: string;
 }
+
+// Status-Antwort von GET /api/login
+export interface LoginStatus {
+  hasSession: boolean;
+}
+
+// Ergebnis von POST /api/login. Bei Fehlschlag: klarer Grund + best-effort-Screenshot
+// (PNG-data-URL) der Seite, damit man z. B. eine Bot-Wall/Captcha direkt sieht statt eines Crashs.
+export interface LoginResult {
+  ok: boolean;
+  reason?: string;
+  screenshot?: string; // data:image/png;base64,...
+}

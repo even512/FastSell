@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { AccountPanel } from "@/components/AccountPanel";
 import { CaptureStep } from "@/components/CaptureStep";
 import { HistoryList } from "@/components/HistoryList";
 import { PriceStep } from "@/components/PriceStep";
@@ -31,7 +32,7 @@ export default function Home() {
   const [listing, setListing] = useState<ListingDraft | null>(null);
   const [priceType, setPriceType] = useState<PriceType>("VB");
   const [priceEuros, setPriceEuros] = useState<number>(0);
-  const [showHistory, setShowHistory] = useState(false);
+  const [panel, setPanel] = useState<null | "history" | "account">(null);
 
   function onAnalyzed(res: AnalyzeResponse) {
     setPhotos(res.photos);
@@ -47,6 +48,7 @@ export default function Home() {
     setPriceType("VB");
     setPriceEuros(0);
     setStep("capture");
+    setPanel(null);
   }
 
   function chosenPhotos(): string[] {
@@ -76,15 +78,29 @@ export default function Home() {
           <img src="/icon.svg" alt="" className="h-7 w-7" />
           FastSell
         </button>
-        <button
-          onClick={() => setShowHistory((v) => !v)}
-          className="rounded-full px-3 py-1 text-sm text-gray-600 hover:bg-gray-100"
-        >
-          {showHistory ? "Zurück" : "Historie"}
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setPanel((p) => (p === "account" ? null : "account"))}
+            className={`rounded-full px-3 py-1 text-sm hover:bg-gray-100 ${
+              panel === "account" ? "font-semibold text-brand" : "text-gray-600"
+            }`}
+          >
+            Konto
+          </button>
+          <button
+            onClick={() => setPanel((p) => (p === "history" ? null : "history"))}
+            className={`rounded-full px-3 py-1 text-sm hover:bg-gray-100 ${
+              panel === "history" ? "font-semibold text-brand" : "text-gray-600"
+            }`}
+          >
+            Historie
+          </button>
+        </div>
       </header>
 
-      {showHistory ? (
+      {panel === "account" ? (
+        <AccountPanel />
+      ) : panel === "history" ? (
         <HistoryList />
       ) : (
         <>
