@@ -52,6 +52,8 @@ export async function POST(req: NextRequest) {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
+      // Verhindert Buffering im Reverse-Proxy (nginx), damit SSE live durchkommt.
+      "X-Accel-Buffering": "no",
     },
   });
 }

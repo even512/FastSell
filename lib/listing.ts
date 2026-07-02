@@ -81,6 +81,13 @@ export async function generateListing(
     };
   }
 
+  if (!process.env.ANTHROPIC_API_KEY?.trim()) {
+    throw new Error(
+      "Kein ANTHROPIC_API_KEY gesetzt. Für Produktion in .env.production.local hinterlegen " +
+        "(oder als systemd-EnvironmentFile). Zum Ausprobieren ohne KI: FASTSELL_MOCK=1.",
+    );
+  }
+
   const client = new Anthropic(); // liest ANTHROPIC_API_KEY / ant-Profil aus der Umgebung
 
   const imageBlocks = images.map((img) => ({

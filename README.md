@@ -56,6 +56,14 @@ Auf dem Handy: im selben Netz die LAN-IP des Rechners öffnen (z. B. `http://192
 
 ---
 
+## Self-Hosting (nginx)
+
+Für den Betrieb hinter deinem nginx-Reverse-Proxy (Build, systemd-Service, SSE-taugliche
+nginx-Config, Key-Handling) siehe **[DEPLOY.md](./DEPLOY.md)**. Kurz: Der `ANTHROPIC_API_KEY` wird
+**nur serverseitig** benutzt (nie im Browser) und gehört in eine gitignorierte
+`.env.production.local` bzw. ein systemd-`EnvironmentFile` – **nicht** in committeten Code (sonst
+GitHub-Secret-Scanning → Widerruf).
+
 ## Auto-Posting (einmaliger Login)
 
 Das Einstellen braucht einen gespeicherten Kleinanzeigen-Login. `POST /api/login` öffnet einen
