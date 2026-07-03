@@ -115,9 +115,11 @@ async function requireEl(
 async function describeForm(page: Page): Promise<string> {
   try {
     const info = await page.evaluate(() => {
+      const visible = (el: Element) =>
+        (el as HTMLElement).offsetParent !== null || el.getAttribute("type") === "file";
       const controls = Array.from(document.querySelectorAll("input, textarea, select, button"));
       const rows = controls
-        .filter((el) => (el as HTMLElement).offsetParent !== null || el.getAttribute("type") === "file")
+        .filter(visible)
         .slice(0, 40)
         .map((el) => {
           const type = el.getAttribute("type") || "";
@@ -133,16 +135,75 @@ async function describeForm(page: Page): Promise<string> {
             `id=${id || "-"} name=${name || "-"}${ph ? ` ph="${ph}"` : ""}${label ? ` · ${label}` : ""}`
           );
         });
-      return { url: location.href, title: document.title, total: controls.length, rows };
+      // Klickbares (Links/Kategorien) – Kategorien sind oft <a>, nicht Formularfelder.
+      const clickable = Array.from(
+        document.querySelectorAll('a[href], [role="link"], [role="button"]'),
+      )
+        .filter((el) => visible(el) && (el.textContent || "").trim())
+        .slice(0, 40)
+        .map((el) => {
+          const id = (el as HTMLElement).id || "";
+          const href = el.getAttribute("href") || "";
+          const text = (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 40);
+          return `${el.tagName.toLowerCase()} id=${id || "-"}${href ? ` href=${href.slice(0, 50)}` : ""} · ${text}`;
+        });
+      return { url: location.href, title: document.title, total: controls.length, rows, clickable };
     });
     return [
       `URL: ${info.url}`,
       `Seitentitel: ${info.title}`,
       `Sichtbare Formularelemente (von ${info.total} gesamt):`,
-      ...info.rows,
+      ...(info.rows.length ? info.rows : ["(keine)"]),
+      "Klickbares (Links/Kategorien, Auswahl):",
+      ...(info.clickable.length ? info.clickable : ["(keine)"]),
     ].join("\n");
   } catch (e) {
     return `Diagnose nicht möglich: ${(e as Error).message}`;
+  }
+}
+
+/** Klickt ein Element anhand seines sichtbaren Textes (Link/Button) – robust ohne CSS-Selektor. */
+async function clickByText(page: Page, text: string): Promise<boolean> {
+  const tries = [
+    page.getByRole("link", { name: text, exact: true }),
+    page.getByRole("button", { name: text, exact: true }),
+    page.getByRole("link", { name: text }),
+    page.getByText(text, { exact: true }),
+  ];
+  for (const loc of tries) {
+    const el = loc.first();
+    if ((await el.count().catch(() => 0)) === 0) continue;
+    try {
+      await el.click({ timeout: FIELD_TIMEOUT });
+      return true;
+    } catch {
+      /* nächster Kandidat */
+    }
+  }
+  return false;
+}
+
+/**
+ * Klickt den Kategorie-Pfad durch (z. B. „Elektronik > Handys & Telefone"). Kleinanzeigen startet
+ * das Aufgeben mit einer Kategorie-Auswahl; das eigentliche Formular erscheint erst danach.
+ */
+async function selectCategory(
+  page: Page,
+  categoryPath: string,
+  onProgress: (p: PublishProgress) => void,
+): Promise<void> {
+  const parts = categoryPath
+    .split(">")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const part of parts) {
+    // Sind wir schon im Formular? Dann keine Kategorie mehr nötig.
+    if ((await page.locator("#postad-title").count().catch(() => 0)) > 0) return;
+    onProgress({ step: "category", status: "running", message: `Kategorie: „${part}" …` });
+    const ok = await clickByText(page, part);
+    if (!ok) return; // nicht gefunden – der Aufrufer meldet später ehrlich inkl. Diagnose
+    await page.waitForLoadState("domcontentloaded").catch(() => {});
+    await randomDelay(500, 1200);
   }
 }
 
@@ -207,6 +268,17 @@ export async function publishListing(
         screenshot,
       });
       return;
+    }
+
+    // Kategorie-Auswahl: Kleinanzeigen zeigt zuerst eine Kategorieseite; das Formular kommt danach.
+    if ((await page.locator("#postad-title").count().catch(() => 0)) === 0 && req.category) {
+      onProgress({
+        step: "category",
+        status: "running",
+        message: `Kategorie wird gewählt: ${req.category} …`,
+      });
+      await selectCategory(page, req.category, onProgress);
+      await randomDelay(400, 1000);
     }
 
     // Titel (Pflicht) – zugleich der Check, ob wir überhaupt im Formular gelandet sind.
