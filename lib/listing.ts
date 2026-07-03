@@ -48,7 +48,7 @@ Regeln für die Beschreibung – das ist das Wichtigste:
 - Kurze, ehrliche Sätze. Leichte Ich-Perspektive ist ok ("Verkaufe hier ...", "Habe ich selten benutzt").
 - Nenne konkret, was man sieht: Zustand, sichtbare Gebrauchsspuren, Besonderheiten, Zubehör.
 - Erfinde KEINE Fakten (keine Maße/Baujahre/technischen Daten, die nicht erkennbar sind). Im Zweifel weglassen.
-- 3–6 kurze Sätze bzw. 1–2 knappe Absätze reichen. Am Ende ein schlichter Hinweis (z. B. "Abholung oder Versand möglich."), keine aggressive Verhandlungsansage.
+- 3–6 kurze Sätze bzw. 1–2 knappe Absätze reichen. Beende die Beschreibung mit einem schlichten Hinweis "Nur Abholung." (der Verkauf ist ausschließlich zur Abholung, kein Versand), keine aggressive Verhandlungsansage.
 
 Fülle alle Felder aus. Antworte ausschließlich im geforderten strukturierten Format.`;
 

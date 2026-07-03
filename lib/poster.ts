@@ -7,7 +7,7 @@ import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import { chooseCategoryOption, type CategoryProduct } from "./categorize";
 import { parseDataUrl } from "./images";
 import { loadStorageState } from "./session";
-import type { PublishProgress, PublishRequest } from "./types";
+import type { PriceType, PublishProgress, PublishRequest } from "./types";
 
 // Stealth-Plugin registrieren (reduziert Bot-Erkennung; kein Freifahrtschein gegen Akamai).
 chromium.use(StealthPlugin());
@@ -514,6 +514,94 @@ async function selectFromDropdown(page: Page, triggerRe: RegExp, optionText: str
 }
 
 /**
+ * Setzt eine Checkbox/einen Switch (per sichtbarem Namen) auf checked und liest den Zustand zurück.
+ * Rückgabe: true/false = tatsächlicher Zustand danach, null = Control nicht gefunden.
+ */
+async function setToggle(page: Page, nameRe: RegExp, checked: boolean): Promise<boolean | null> {
+  const box = page
+    .getByRole("checkbox", { name: nameRe })
+    .or(page.getByRole("switch", { name: nameRe }))
+    .first();
+  if ((await box.count().catch(() => 0)) === 0) return null;
+  try {
+    if (checked) await box.check({ timeout: FIELD_TIMEOUT });
+    else await box.uncheck({ timeout: FIELD_TIMEOUT });
+  } catch {
+    /* Zustand trotzdem zurücklesen */
+  }
+  return box.isChecked().catch(() => null);
+}
+
+/**
+ * Setzt die Preisart zuverlässig und **meldet** das Ergebnis (statt still zu scheitern wie bisher).
+ * Mehr-Strategie über sichtbare Labels/Rollen: Checkbox/Switch „VB"/„Zu verschenken", sonst Klick auf
+ * das Label, sonst Custom-Dropdown-Fallback. Bei Misserfolg eine sichtbare, nicht-fatale Warnung.
+ */
+async function setPriceType(
+  page: Page,
+  type: PriceType,
+  onProgress: (p: PublishProgress) => void,
+): Promise<void> {
+  const done = (label: string) =>
+    onProgress({ step: "price", status: "running", message: `Preisart: ${label} gesetzt` });
+  const warn = (label: string) =>
+    onProgress({
+      step: "price",
+      status: "running",
+      message: `⚠ Preisart konnte nicht auf ${label} gesetzt werden – bitte in der Anzeige prüfen.`,
+    });
+
+  if (type === "FIXED") {
+    // Festpreis ist der KA-Default; nur sicherstellen, dass ein evtl. VB-Schalter nicht aktiv ist.
+    await setToggle(page, /^vb$|verhandlungsbasis/i, false);
+    return done("Festpreis");
+  }
+  if (type === "VB") {
+    const t = await setToggle(page, /^vb$|verhandlungsbasis/i, true);
+    if (t === true) return done("VB");
+    if (t === null && (await clickExactText(page, "VB"))) return done("VB");
+    if (t === null && (await selectFromDropdown(page, /preistyp|festpreis/i, "VB"))) return done("VB");
+    return warn("VB");
+  }
+  // FREE
+  const f = await setToggle(page, /zu verschenken|verschenken/i, true);
+  if (f === true) return done("Zu verschenken");
+  if (f === null && (await clickExactText(page, "Zu verschenken"))) return done("Zu verschenken");
+  if (f === null && (await selectFromDropdown(page, /preistyp|festpreis|vb/i, "Zu verschenken")))
+    return done("Zu verschenken");
+  return warn("Zu verschenken");
+}
+
+/**
+ * Setzt die Versandart immer auf „Nur Abholung" und meldet das Ergebnis. Mehr-Strategie
+ * (Radio/Button/Label, sonst „Versand"-Checkbox deaktivieren); best-effort, bricht den Post nicht ab.
+ */
+async function setShippingPickup(
+  page: Page,
+  onProgress: (p: PublishProgress) => void,
+): Promise<void> {
+  const done = () => onProgress({ step: "shipping", status: "running", message: "Versand: Nur Abholung" });
+
+  // 1) Radio „Nur Abholung"
+  const radio = page.getByRole("radio", { name: /nur abholung|^abholung/i }).first();
+  if ((await radio.count().catch(() => 0)) > 0) {
+    await radio.check({ timeout: FIELD_TIMEOUT }).catch(() => {});
+    if (await radio.isChecked().catch(() => false)) return done();
+  }
+  // 2) Button/Label „Nur Abholung"
+  if (await clickExactText(page, "Nur Abholung")) return done();
+  // 3) „Versand"-Checkbox deaktivieren (falls Versand als opt-in Checkbox umgesetzt ist)
+  const versand = await setToggle(page, /versand möglich|^versand$/i, false);
+  if (versand === false) return done();
+
+  onProgress({
+    step: "shipping",
+    status: "running",
+    message: `⚠ „Nur Abholung" konnte nicht gesetzt werden – bitte Versandart in der Anzeige prüfen.`,
+  });
+}
+
+/**
  * Stellt eine Anzeige über Browser-Automation ein.
  *
  * Kleinanzeigen hat keine offene API und ist Akamai-geschützt; das Formular ändert sich zudem
@@ -604,7 +692,7 @@ export async function publishListing(
       await randomDelay(200, 600);
     }
 
-    // Beschreibung (Pflicht)
+    // Beschreibung (Pflicht) – „Nur Abholung" garantiert erwähnen (auch wenn Modell/Nutzer es weglässt).
     onProgress({ step: "description", status: "running", message: "Beschreibung wird eingetragen …" });
     const descEl = await requireEl(
       page,
@@ -612,23 +700,26 @@ export async function publishListing(
       "description",
       "Beschreibungs-Feld",
     );
-    await descEl.fill(req.description, { timeout: FIELD_TIMEOUT });
+    const description = /abhol/i.test(req.description)
+      ? req.description
+      : `${req.description.trimEnd()}\n\nNur Abholung.`;
+    await descEl.fill(description, { timeout: FIELD_TIMEOUT });
     await randomDelay(200, 600);
 
-    // Preis + Preistyp
+    // Preis + Preisart (Preisart wird jetzt zuverlässig gesetzt UND gemeldet).
     onProgress({ step: "price", status: "running", message: "Preis wird gesetzt …" });
-    if (req.priceType === "FREE") {
-      // Preistyp-Dropdown auf „Zu verschenken" (best effort).
-      await selectFromDropdown(page, /preistyp|festpreis|vb/i, "Zu verschenken").catch(() => {});
-    } else {
+    if (req.priceType !== "FREE") {
       const euro = Math.round(req.priceCents / 100).toString();
       const priceEl = await requireEl(page, "#ad-price-amount, #pstad-price", "price", "Preis-Feld");
       await priceEl.fill(euro, { timeout: FIELD_TIMEOUT });
-      // „Festpreis" ist KA-Default; für VB best effort umstellen.
-      if (req.priceType === "VB") {
-        await selectFromDropdown(page, /preistyp|festpreis/i, "VB").catch(() => {});
-      }
+      await randomDelay(150, 400);
     }
+    await setPriceType(page, req.priceType, onProgress);
+    await randomDelay(200, 600);
+
+    // Versandart: immer „Nur Abholung".
+    onProgress({ step: "shipping", status: "running", message: "Versandart wird gesetzt …" });
+    await setShippingPickup(page, onProgress);
     await randomDelay(200, 600);
 
     // Fotos hochladen (verstecktes File-Input → auf "attached" statt "visible" warten)
