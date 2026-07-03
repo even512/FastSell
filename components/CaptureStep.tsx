@@ -7,7 +7,8 @@ export function CaptureStep({ onAnalyzed }: { onAnalyzed: (res: AnalyzeResponse)
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const galleryRef = useRef<HTMLInputElement>(null);
 
   function addFiles(list: FileList | null) {
     if (!list) return;
@@ -66,23 +67,49 @@ export function CaptureStep({ onAnalyzed }: { onAnalyzed: (res: AnalyzeResponse)
         </div>
       )}
 
+      {/* Kamera: Einzelaufnahme mit der RÜCKKamera. Wichtig: KEIN `multiple` neben `capture` – die
+          Kombination lässt viele Handys die „environment"-Vorgabe ignorieren und die Selfie-Kamera
+          öffnen. `e.target.value` zurücksetzen, damit dieselbe Aufnahme erneut ausgelöst werden kann. */}
       <input
-        ref={inputRef}
+        ref={cameraRef}
         type="file"
         accept="image/*"
         capture="environment"
+        className="hidden"
+        onChange={(e) => {
+          addFiles(e.target.files);
+          e.target.value = "";
+        }}
+      />
+      {/* Galerie: Mehrfachauswahl vorhandener Fotos, ohne Kamera-Zwang. */}
+      <input
+        ref={galleryRef}
+        type="file"
+        accept="image/*"
         multiple
         className="hidden"
-        onChange={(e) => addFiles(e.target.files)}
+        onChange={(e) => {
+          addFiles(e.target.files);
+          e.target.value = "";
+        }}
       />
 
-      <button
-        onClick={() => inputRef.current?.click()}
-        className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-gray-300 bg-white py-6 text-gray-600"
-      >
-        <span className="text-2xl">📷</span>
-        {files.length === 0 ? "Fotos aufnehmen / auswählen" : "Weitere Fotos hinzufügen"}
-      </button>
+      <div className="grid grid-cols-2 gap-3">
+        <button
+          onClick={() => cameraRef.current?.click()}
+          className="flex items-center justify-center gap-2 rounded-xl border-2 border-dashed border-gray-300 bg-white py-6 text-gray-600"
+        >
+          <span className="text-2xl">📷</span>
+          Kamera
+        </button>
+        <button
+          onClick={() => galleryRef.current?.click()}
+          className="flex items-center justify-center gap-2 rounded-xl border-2 border-dashed border-gray-300 bg-white py-6 text-gray-600"
+        >
+          <span className="text-2xl">🖼️</span>
+          Galerie
+        </button>
+      </div>
 
       {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
 
