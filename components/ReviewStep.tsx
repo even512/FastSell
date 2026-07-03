@@ -31,8 +31,9 @@ export function ReviewStep({
   onBack: () => void;
   onNext: () => void;
 }) {
-  // Status der on-demand-Freisteller-Berechnung pro Foto-Index.
+  // Status + Fehlergrund der on-demand-Freisteller-Berechnung pro Foto-Index.
   const [cutoutStatus, setCutoutStatus] = useState<Record<number, "loading" | "failed">>({});
+  const [cutoutReason, setCutoutReason] = useState<Record<number, string>>({});
 
   function setStatus(i: number, s: "loading" | "failed" | null) {
     setCutoutStatus((m) => {
@@ -59,11 +60,12 @@ export function ReviewStep({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image: p.optimized }),
       });
-      const data = (await res.json()) as { cutout?: string | null };
+      const data = (await res.json()) as { cutout?: string | null; reason?: string };
       if (data.cutout) {
         onCutout(i, data.cutout); // speichert im Parent + wählt die Freisteller-Variante
         setStatus(i, null);
       } else {
+        setCutoutReason((m) => ({ ...m, [i]: data.reason || "" }));
         setStatus(i, "failed");
       }
     } catch {
@@ -121,7 +123,8 @@ export function ReviewStep({
                 </div>
                 {cutoutStatus[i] === "failed" && (
                   <p className="text-[11px] text-gray-400">
-                    Freisteller nicht möglich – „Optimiert" wird verwendet.
+                    Freisteller nicht möglich{cutoutReason[i] ? ` (${cutoutReason[i]})` : ""} – „Optimiert"
+                    wird verwendet.
                   </p>
                 )}
               </div>

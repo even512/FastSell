@@ -33,14 +33,14 @@ async function main() {
   writeDataUrl("optimized.jpg", res.optimized);
 
   // Freisteller separat berechnen (on-demand), wie es die Route /api/cutout tut.
-  const cutout = await cutoutFromDataUrl(res.optimized);
+  const { cutout, reason } = await cutoutFromDataUrl(res.optimized);
   if (cutout) writeDataUrl("cutout.jpg", cutout);
 
   console.log("✅ optimiert erzeugt   ->", path.join(outDir, "optimized.jpg"));
   console.log(
     cutout
       ? `✅ Freisteller erzeugt -> ${path.join(outDir, "cutout.jpg")}`
-      : "ℹ️  Freisteller lieferte null (@imgly-Modell nicht installiert/lauffähig) – im Container mit installiertem Modell erwartet grün",
+      : `ℹ️  Freisteller lieferte null (${reason ?? "unbekannt"}) – im Container mit installiertem Modell erwartet grün`,
   );
   console.log("Smoke-Test der Bildpipeline OK.");
 }

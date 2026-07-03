@@ -12,12 +12,12 @@ export async function POST(req: NextRequest) {
     if (!image || !image.startsWith("data:")) {
       return NextResponse.json({ error: "Kein Bild übermittelt." }, { status: 400 });
     }
-    // cutout ist eine data-URL oder null (Modell nicht verfügbar / Freisteller fehlgeschlagen).
-    const cutout = await cutoutFromDataUrl(image);
-    return NextResponse.json({ cutout });
+    // { cutout: data-URL | null, reason? } – reason erklärt einen Fehlschlag (Modell fehlt o. Ä.).
+    const result = await cutoutFromDataUrl(image);
+    return NextResponse.json(result);
   } catch (err) {
     console.error("[cutout]", err);
     // Kein harter Fehler: die UI fällt sauber auf „Optimiert" zurück.
-    return NextResponse.json({ cutout: null });
+    return NextResponse.json({ cutout: null, reason: (err as Error).message?.slice(0, 160) });
   }
 }

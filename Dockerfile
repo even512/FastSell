@@ -13,6 +13,12 @@ RUN apt-get update \
 COPY package.json package-lock.json ./
 RUN npm ci
 
+# Sicherstellen, dass das Freisteller-Modell wirklich installiert wurde. Bricht den Build sonst hart
+# ab, statt ein Image auszuliefern, in dem der Freisteller zur Laufzeit still fehlt ("Cannot find
+# module"). Fängt auch den Fall, dass ein alter, gecachter npm-ci-Layer wiederverwendet wurde.
+RUN test -d node_modules/@imgly/background-removal-node && test -d node_modules/onnxruntime-node \
+  || (echo "FEHLER: Freisteller-Modell (@imgly/background-removal-node / onnxruntime-node) fehlt nach 'npm ci'. Build mit --no-cache neu bauen und Netzzugriff der Build-Maschine prüfen." && exit 1)
+
 # Chromium + System-Bibliotheken für Playwright (versionsgleich zum installierten playwright).
 # Läuft auf der Build-Maschine (dort ist GitHub/CDN erreichbar).
 RUN npx playwright install --with-deps chromium
