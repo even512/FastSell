@@ -162,12 +162,11 @@ async function describeForm(page: Page): Promise<string> {
   }
 }
 
-/** Klickt ein Element anhand seines sichtbaren Textes (Link/Button) – robust ohne CSS-Selektor. */
-async function clickByText(page: Page, text: string): Promise<boolean> {
+/** Klickt ein Element anhand seines exakten sichtbaren Textes (Link/Button). */
+async function clickExactText(page: Page, text: string): Promise<boolean> {
   const tries = [
     page.getByRole("link", { name: text, exact: true }),
     page.getByRole("button", { name: text, exact: true }),
-    page.getByRole("link", { name: text }),
     page.getByText(text, { exact: true }),
   ];
   for (const loc of tries) {
@@ -183,9 +182,68 @@ async function clickByText(page: Page, text: string): Promise<boolean> {
   return false;
 }
 
+function normCat(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9äöüß]+/gi, " ")
+    .trim();
+}
+
+/** Ähnlichkeit zweier Kategorienamen: exakt > Präfix > enthält > Wort-Überlappung. */
+function scoreCat(target: string, candidate: string): number {
+  const t = normCat(target);
+  const c = normCat(candidate);
+  if (!t || !c) return 0;
+  if (t === c) return 100;
+  if (c.startsWith(t) || t.startsWith(c)) return 80;
+  if (c.includes(t) || t.includes(c)) return 60;
+  const a = new Set(t.split(" "));
+  const b = new Set(c.split(" "));
+  const inter = [...a].filter((x) => b.has(x)).length;
+  return inter > 0 ? 30 + inter * 5 : 0;
+}
+
 /**
- * Klickt den Kategorie-Pfad durch (z. B. „Elektronik > Handys & Telefone"). Kleinanzeigen startet
- * das Aufgeben mit einer Kategorie-Auswahl; das eigentliche Formular erscheint erst danach.
+ * Wählt die am besten passende Kategorie-Verknüpfung und klickt sie. Schließt bereits Geklicktes
+ * (v. a. die Elternkategorie) aus und bevorzugt bei Gleichstand den kürzeren = spezifischeren Namen.
+ * Gibt den tatsächlich geklickten Text zurück (oder null).
+ */
+async function clickBestCategory(
+  page: Page,
+  target: string,
+  clicked: Set<string>,
+): Promise<string | null> {
+  const cands: string[] = await page.evaluate(() => {
+    const els = Array.from(document.querySelectorAll('a[href], [role="link"], [role="button"]'));
+    return els
+      .filter((el) => (el as HTMLElement).offsetParent !== null && (el.textContent || "").trim())
+      .map((el) => (el.textContent || "").trim().replace(/\s+/g, " "));
+  });
+  let best: string | null = null;
+  let bestScore = 0;
+  let bestLenDiff = Number.POSITIVE_INFINITY;
+  const tLen = normCat(target).length;
+  for (const text of cands) {
+    if (clicked.has(text)) continue;
+    const s = scoreCat(target, text);
+    if (s < 30) continue;
+    const lenDiff = Math.abs(normCat(text).length - tLen);
+    if (s > bestScore || (s === bestScore && lenDiff < bestLenDiff)) {
+      best = text;
+      bestScore = s;
+      bestLenDiff = lenDiff;
+    }
+  }
+  if (!best) return null;
+  const ok = await clickExactText(page, best);
+  if (ok) clicked.add(best);
+  return ok ? best : null;
+}
+
+/**
+ * Klickt den Kategorie-Pfad durch (z. B. „Musik, Filme & Bücher > Musik & CDs"). Kleinanzeigen
+ * startet das Aufgeben mit einer Kategorie-Auswahl; das Formular erscheint erst nach der Wahl einer
+ * Blatt-Kategorie und „Weiter".
  */
 async function selectCategory(
   page: Page,
@@ -196,12 +254,17 @@ async function selectCategory(
     .split(">")
     .map((s) => s.trim())
     .filter(Boolean);
+  const clicked = new Set<string>();
   for (const part of parts) {
     // Sind wir schon im Formular? Dann keine Kategorie mehr nötig.
     if ((await page.locator("#postad-title").count().catch(() => 0)) > 0) return;
-    onProgress({ step: "category", status: "running", message: `Kategorie: „${part}" …` });
-    const ok = await clickByText(page, part);
-    if (!ok) return; // nicht gefunden – der Aufrufer meldet später ehrlich inkl. Diagnose
+    const picked = await clickBestCategory(page, part, clicked);
+    onProgress({
+      step: "category",
+      status: "running",
+      message: picked ? `Kategorie: „${picked}" …` : `Kategorie „${part}" nicht gefunden …`,
+    });
+    if (!picked) return; // nichts Passendes – der Aufrufer meldet später ehrlich inkl. Diagnose
     await page.waitForLoadState("domcontentloaded").catch(() => {});
     await randomDelay(500, 1200);
   }
