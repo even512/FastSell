@@ -17,6 +17,8 @@ const BASE_URL = "https://www.kleinanzeigen.de";
 const NEW_AD_URL = process.env.FASTSELL_NEW_AD_URL || `${BASE_URL}/p-anzeige-aufgeben.html`;
 // Felder sollen schnell scheitern (statt 30 s Default zu warten), wenn ein Selektor nicht passt.
 const FIELD_TIMEOUT = 8000;
+// Titel-Feld = zuverlässigstes Signal „wir sind im Formular". Aktuell #ad-title, früher #postad-title.
+const TITLE_SEL = "#ad-title, #postad-title";
 
 function execPath(): string | undefined {
   // Container: Chromium ist vorinstalliert. Sonst überschreibbar per ENV.
@@ -257,7 +259,7 @@ async function selectCategory(
   const clicked = new Set<string>();
   for (const part of parts) {
     // Sind wir schon im Formular? Dann keine Kategorie mehr nötig.
-    if ((await page.locator("#postad-title").count().catch(() => 0)) > 0) return;
+    if ((await page.locator(TITLE_SEL).count().catch(() => 0)) > 0) return;
     const picked = await clickBestCategory(page, part, clicked);
     onProgress({
       step: "category",
@@ -276,7 +278,7 @@ async function selectCategory(
  */
 async function advanceToForm(page: Page, onProgress: (p: PublishProgress) => void): Promise<void> {
   for (let i = 0; i < 3; i++) {
-    if ((await page.locator("#postad-title").count().catch(() => 0)) > 0) return; // Formular da
+    if ((await page.locator(TITLE_SEL).count().catch(() => 0)) > 0) return; // Formular da
     const weiter = page.getByRole("button", { name: /^weiter/i }).first();
     if ((await weiter.count().catch(() => 0)) === 0) return; // kein „Weiter" → Aufrufer meldet ehrlich
     onProgress({ step: "category", status: "running", message: "Weiter zum Formular …" });
@@ -284,6 +286,24 @@ async function advanceToForm(page: Page, onProgress: (p: PublishProgress) => voi
     await page.waitForLoadState("domcontentloaded").catch(() => {});
     await randomDelay(800, 1800);
   }
+}
+
+/**
+ * Best-effort: öffnet ein Custom-Dropdown (Button, dessen Name triggerRe matcht) und wählt die
+ * Option optionText. Kleinanzeigen nutzt für Zustand/Preistyp keine <select>, sondern Buttons+Menüs.
+ */
+async function selectFromDropdown(page: Page, triggerRe: RegExp, optionText: string): Promise<boolean> {
+  const trigger = page.getByRole("button", { name: triggerRe }).first();
+  if ((await trigger.count().catch(() => 0)) === 0) return false;
+  try {
+    await trigger.click({ timeout: FIELD_TIMEOUT });
+  } catch {
+    return false;
+  }
+  await randomDelay(300, 800);
+  const ok = await clickExactText(page, optionText);
+  if (!ok) await page.keyboard.press("Escape").catch(() => {});
+  return ok;
 }
 
 /**
@@ -350,7 +370,7 @@ export async function publishListing(
     }
 
     // Kategorie-Auswahl: Kleinanzeigen zeigt zuerst eine Kategorieseite; das Formular kommt danach.
-    if ((await page.locator("#postad-title").count().catch(() => 0)) === 0 && req.category) {
+    if ((await page.locator(TITLE_SEL).count().catch(() => 0)) === 0 && req.category) {
       onProgress({
         step: "category",
         status: "running",
@@ -364,27 +384,40 @@ export async function publishListing(
 
     // Titel (Pflicht) – zugleich der Check, ob wir überhaupt im Formular gelandet sind.
     onProgress({ step: "title", status: "running", message: "Titel wird eingetragen …" });
-    const titleEl = await requireEl(page, "#postad-title", "title", "Titel-Feld");
+    const titleEl = await requireEl(page, TITLE_SEL, "title", "Titel-Feld");
     await titleEl.fill(req.title, { timeout: FIELD_TIMEOUT });
     await randomDelay(200, 600);
 
+    // Zustand (bei vielen Kategorien Pflicht) – Custom-Dropdown, best effort.
+    if (req.condition) {
+      await selectFromDropdown(page, /zustand/i, req.condition).catch(() => {});
+      await randomDelay(200, 600);
+    }
+
     // Beschreibung (Pflicht)
     onProgress({ step: "description", status: "running", message: "Beschreibung wird eingetragen …" });
-    const descEl = await requireEl(page, "#pstad-descrptn", "description", "Beschreibungs-Feld");
+    const descEl = await requireEl(
+      page,
+      "#ad-description, #pstad-descrptn",
+      "description",
+      "Beschreibungs-Feld",
+    );
     await descEl.fill(req.description, { timeout: FIELD_TIMEOUT });
     await randomDelay(200, 600);
 
     // Preis + Preistyp
     onProgress({ step: "price", status: "running", message: "Preis wird gesetzt …" });
     if (req.priceType === "FREE") {
-      await page.locator("#radio-pricetype-GIVE_AWAY").first().check({ timeout: FIELD_TIMEOUT }).catch(() => {});
+      // Preistyp-Dropdown auf „Zu verschenken" (best effort).
+      await selectFromDropdown(page, /preistyp|festpreis|vb/i, "Zu verschenken").catch(() => {});
     } else {
       const euro = Math.round(req.priceCents / 100).toString();
-      const priceEl = await requireEl(page, "#pstad-price", "price", "Preis-Feld");
+      const priceEl = await requireEl(page, "#ad-price-amount, #pstad-price", "price", "Preis-Feld");
       await priceEl.fill(euro, { timeout: FIELD_TIMEOUT });
-      const typeSel =
-        req.priceType === "FIXED" ? "#radio-pricetype-FIXED" : "#radio-pricetype-NEGOTIABLE";
-      await page.locator(typeSel).first().check({ timeout: FIELD_TIMEOUT }).catch(() => {});
+      // „Festpreis" ist KA-Default; für VB best effort umstellen.
+      if (req.priceType === "VB") {
+        await selectFromDropdown(page, /preistyp|festpreis/i, "VB").catch(() => {});
+      }
     }
     await randomDelay(200, 600);
 
@@ -399,12 +432,27 @@ export async function publishListing(
     await fileInput.setInputFiles(files, { timeout: FIELD_TIMEOUT });
     await randomDelay(1500, 3000);
 
-    // Absenden
+    // Absenden – Button „Anzeige aufgeben" (früher #pstad-submit).
     onProgress({ step: "submit", status: "running", message: "Anzeige wird veröffentlicht …" });
-    const submitEl = await requireEl(page, "#pstad-submit", "submit", "Veröffentlichen-Button");
-    await submitEl.click({ timeout: FIELD_TIMEOUT });
+    const submitBtn = page
+      .getByRole("button", { name: "Anzeige aufgeben", exact: true })
+      .or(page.locator("#pstad-submit"))
+      .first();
+    if ((await submitBtn.count().catch(() => 0)) === 0) {
+      throw new StepError("submit", "Veröffentlichen-Button „Anzeige aufgeben“ nicht gefunden.");
+    }
+    await submitBtn.click({ timeout: FIELD_TIMEOUT });
     await page.waitForLoadState("domcontentloaded").catch(() => {});
     await randomDelay(1500, 3000);
+
+    // Kleinanzeigen zeigt nach dem Absenden evtl. ein Upsell-Modal („Highlight buchen?"). Die
+    // kostenlose Variante bestätigen (best effort), damit die Anzeige wirklich rausgeht.
+    const upsell = page.getByRole("button", { name: /kostenlos|ohne highlight|^weiter$/i }).first();
+    if ((await upsell.count().catch(() => 0)) > 0) {
+      await upsell.click({ timeout: FIELD_TIMEOUT }).catch(() => {});
+      await page.waitForLoadState("domcontentloaded").catch(() => {});
+      await randomDelay(1000, 2000);
+    }
 
     if (await isBlocked(page)) {
       const screenshot = await screenshotDataUrl(page);
@@ -419,9 +467,11 @@ export async function publishListing(
 
     // Erfolg VERIFIZIEREN statt behaupten: sind wir aus dem Formular raus?
     onProgress({ step: "verify", status: "running", message: "Veröffentlichung wird geprüft …" });
-    const stillOnForm = await page.locator("#postad-title").count().catch(() => 1);
+    // Das Formular selbst liegt unter …/p-anzeige-aufgeben-schritt2.html – die URL taugt daher nicht
+    // als Erfolgssignal. Zuverlässig: das Titel-Feld ist weg = wir sind aus dem Formular raus.
+    const stillOnForm = await page.locator(TITLE_SEL).count().catch(() => 1);
     const finalUrl = page.url();
-    const published = stillOnForm === 0 && !/anzeige-aufgeben/i.test(finalUrl);
+    const published = stillOnForm === 0;
     if (!published) {
       await reportFailure(
         "verify",
