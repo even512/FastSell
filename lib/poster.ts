@@ -208,6 +208,22 @@ async function selectCategory(
 }
 
 /**
+ * Nach gewählter Kategorie führt Kleinanzeigen über einen „Weiter"-Button zum eigentlichen
+ * Formular (Schritt 2). Klickt „Weiter", bis das Titel-Feld erscheint (max. wenige Zwischenschritte).
+ */
+async function advanceToForm(page: Page, onProgress: (p: PublishProgress) => void): Promise<void> {
+  for (let i = 0; i < 3; i++) {
+    if ((await page.locator("#postad-title").count().catch(() => 0)) > 0) return; // Formular da
+    const weiter = page.getByRole("button", { name: /^weiter/i }).first();
+    if ((await weiter.count().catch(() => 0)) === 0) return; // kein „Weiter" → Aufrufer meldet ehrlich
+    onProgress({ step: "category", status: "running", message: "Weiter zum Formular …" });
+    await weiter.click({ timeout: FIELD_TIMEOUT }).catch(() => {});
+    await page.waitForLoadState("domcontentloaded").catch(() => {});
+    await randomDelay(800, 1800);
+  }
+}
+
+/**
  * Stellt eine Anzeige über Browser-Automation ein.
  *
  * Kleinanzeigen hat keine offene API und ist Akamai-geschützt; das Formular ändert sich zudem
@@ -278,6 +294,8 @@ export async function publishListing(
         message: `Kategorie wird gewählt: ${req.category} …`,
       });
       await selectCategory(page, req.category, onProgress);
+      // Nach der Kategorie via „Weiter" zum eigentlichen Formular (Schritt 2).
+      await advanceToForm(page, onProgress);
       await randomDelay(400, 1000);
     }
 
