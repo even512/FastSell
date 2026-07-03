@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { ListingDraft, ProcessedPhoto } from "@/lib/types";
 
 type VariantChoice = "optimized" | "cutout";
@@ -15,6 +16,7 @@ export function ReviewStep({
   photos,
   variant,
   onVariant,
+  onCutout,
   listing,
   onListing,
   onBack,
@@ -23,11 +25,52 @@ export function ReviewStep({
   photos: ProcessedPhoto[];
   variant: VariantChoice[];
   onVariant: (index: number, v: VariantChoice) => void;
+  onCutout: (index: number, dataUrl: string) => void;
   listing: ListingDraft;
   onListing: (next: ListingDraft) => void;
   onBack: () => void;
   onNext: () => void;
 }) {
+  // Status der on-demand-Freisteller-Berechnung pro Foto-Index.
+  const [cutoutStatus, setCutoutStatus] = useState<Record<number, "loading" | "failed">>({});
+
+  function setStatus(i: number, s: "loading" | "failed" | null) {
+    setCutoutStatus((m) => {
+      const next = { ...m };
+      if (s === null) delete next[i];
+      else next[i] = s;
+      return next;
+    });
+  }
+
+  // Freisteller für Foto i anfordern: schon vorhanden -> nur umschalten; sonst /api/cutout aufrufen,
+  // bei Erfolg speichern + auswählen, sonst dezent als „nicht möglich" markieren (bleibt auf Optimiert).
+  async function requestCutout(i: number) {
+    const p = photos[i];
+    if (p.cutout) {
+      onVariant(i, "cutout");
+      return;
+    }
+    if (cutoutStatus[i] === "loading") return;
+    setStatus(i, "loading");
+    try {
+      const res = await fetch("/api/cutout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: p.optimized }),
+      });
+      const data = (await res.json()) as { cutout?: string | null };
+      if (data.cutout) {
+        onCutout(i, data.cutout); // speichert im Parent + wählt die Freisteller-Variante
+        setStatus(i, null);
+      } else {
+        setStatus(i, "failed");
+      }
+    } catch {
+      setStatus(i, "failed");
+    }
+  }
+
   function patch(p: Partial<ListingDraft>) {
     onListing({ ...listing, ...p });
   }
@@ -67,29 +110,27 @@ export function ReviewStep({
                     Optimiert
                   </button>
                   <button
-                    onClick={() => p.cutout && onVariant(i, "cutout")}
-                    disabled={!p.cutout}
-                    className={`flex-1 py-1 ${
-                      variant[i] === "cutout"
-                        ? "bg-brand text-white"
-                        : p.cutout
-                          ? "bg-white text-gray-600"
-                          : "cursor-not-allowed bg-gray-100 text-gray-300"
+                    onClick={() => requestCutout(i)}
+                    disabled={cutoutStatus[i] === "loading"}
+                    className={`flex-1 py-1 disabled:opacity-70 ${
+                      variant[i] === "cutout" ? "bg-brand text-white" : "bg-white text-gray-600"
                     }`}
                   >
-                    Freisteller
+                    {cutoutStatus[i] === "loading" ? "Freistellen …" : "Freisteller"}
                   </button>
                 </div>
+                {cutoutStatus[i] === "failed" && (
+                  <p className="text-[11px] text-gray-400">
+                    Freisteller nicht möglich – „Optimiert" wird verwendet.
+                  </p>
+                )}
               </div>
             );
           })}
         </div>
-        {photos.every((p) => !p.cutout) && (
-          <p className="mt-1 text-[11px] text-gray-400">
-            Freisteller hier nicht verfügbar (Hintergrund-Modell nicht installiert) – es wird die
-            optimierte Variante verwendet.
-          </p>
-        )}
+        <p className="mt-1 text-[11px] text-gray-400">
+          Tipp: „Freisteller" entfernt den Hintergrund (wird beim Antippen berechnet).
+        </p>
       </div>
 
       {/* Anzeigenfelder */}

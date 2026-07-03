@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import sharp from "sharp";
-import { processPhoto } from "../lib/images";
+import { cutoutFromDataUrl, processPhoto } from "../lib/images";
 
-// End-to-End-Test der Bildpipeline ohne Netzwerk/KI:
-// erzeugt ein synthetisches Foto, jagt es durch processPhoto und schreibt beide Varianten raus.
+// End-to-End-Test der Bildpipeline ohne Netzwerk/KI: erzeugt ein synthetisches Foto, optimiert es
+// (processPhoto) und berechnet zusätzlich den Freisteller on-demand (cutoutFromDataUrl) – wie die
+// Route /api/cutout. So wird das Freisteller-Modell weiterhin mitgetestet.
 async function main() {
   const outDir = path.join(process.cwd(), "data", "smoke");
   fs.mkdirSync(outDir, { recursive: true });
@@ -30,13 +31,16 @@ async function main() {
     fs.writeFileSync(path.join(outDir, name), Buffer.from(b64, "base64"));
   };
   writeDataUrl("optimized.jpg", res.optimized);
-  if (res.cutout) writeDataUrl("cutout.jpg", res.cutout);
+
+  // Freisteller separat berechnen (on-demand), wie es die Route /api/cutout tut.
+  const cutout = await cutoutFromDataUrl(res.optimized);
+  if (cutout) writeDataUrl("cutout.jpg", cutout);
 
   console.log("✅ optimiert erzeugt   ->", path.join(outDir, "optimized.jpg"));
   console.log(
-    res.cutout
+    cutout
       ? `✅ Freisteller erzeugt -> ${path.join(outDir, "cutout.jpg")}`
-      : "ℹ️  Freisteller übersprungen (optionales @imgly-Modell nicht installiert – auf normalem Rechner verfügbar)",
+      : "ℹ️  Freisteller lieferte null (@imgly-Modell nicht installiert/lauffähig) – im Container mit installiertem Modell erwartet grün",
   );
   console.log("Smoke-Test der Bildpipeline OK.");
 }

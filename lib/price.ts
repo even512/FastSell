@@ -97,7 +97,10 @@ export async function checkPrice(query: string): Promise<PriceCheckResult> {
       samples: parsed.slice(0, 6),
     };
   } catch (err) {
-    return { ...empty, note: `Preis-Check fehlgeschlagen: ${(err as Error).message}` };
+    // Nur die erste Zeile zeigen – Playwright hängt sonst ein „Call log" mit ANSI-Codes an, das der
+    // automatische Preis-Check ungefragt in der UI anzeigen würde.
+    const first = (err as Error).message.split("\n")[0].slice(0, 140);
+    return { ...empty, note: `Preis-Check gerade nicht möglich: ${first}` };
   } finally {
     await browser?.close().catch(() => {});
   }

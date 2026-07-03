@@ -157,10 +157,19 @@ portiert und sollten gegen die aktuelle Seite validiert werden.
 
 ## Freisteller (Hintergrund-Entfernung)
 
-Der Freisteller nutzt das optionale Paket `@imgly/background-removal-node`. Es lädt bei der
-Installation ein Modell/`libvips` nach; hinter restriktiven Proxys kann das fehlschlagen – dann läuft
-die App ohne Freisteller (nur „optimiert"), der Rest funktioniert normal. Auf einem üblichen Rechner
-installiert es voll und der Freisteller ist aktiv.
+Die zweite Fotovariante „Freisteller" entfernt den Hintergrund und setzt das Objekt auf einen
+neutralen Untergrund. Sie nutzt das lokale ONNX-Modell `@imgly/background-removal-node` (feste
+Dependency, kein Cloud-Dienst, keine Claude-Tokens). Das Docker-Image bringt das Modell + die
+Laufzeit-Lib `libgomp1` mit; das native Paket wird beim Build installiert (dort ist Netz da) – schlägt
+das fehl, bricht der Build **sichtbar** ab (statt den Freisteller still zu deaktivieren).
+
+Der Freisteller wird **bei Bedarf** berechnet: erst wenn man im „Anzeige"-Schritt auf „Freisteller"
+tippt, ruft die App `/api/cutout` für dieses eine Foto auf (kurzer Ladezustand). Das hält die Analyse
+schnell und rechnet nichts für Freisteller, die man nicht nutzt. Auf CPU dauert ein Freisteller grob
+~1–4 s. Klappt er mal nicht, bleibt es sauber bei „optimiert" (kein Abbruch).
+
+`npm run smoke:images` testet die Optimierung **und** den Freisteller offline (schreibt nach
+`data/smoke/`); ist das Modell nicht installiert, meldet es das und überspringt nur den Freisteller.
 
 ---
 

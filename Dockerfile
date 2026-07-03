@@ -3,6 +3,12 @@ FROM node:22-bookworm-slim
 
 WORKDIR /app
 
+# System-Bibliothek für das Freisteller-Modell: onnxruntime-node (via @imgly/background-removal-node)
+# linkt zur Laufzeit gegen libgomp (OpenMP). Ohne die Lib schlägt das Laden des Modells fehl.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends libgomp1 \
+  && rm -rf /var/lib/apt/lists/*
+
 # Nur Manifeste zuerst -> Docker-Layer-Cache für Dependencies
 COPY package.json package-lock.json ./
 RUN npm ci

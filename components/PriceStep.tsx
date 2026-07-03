@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ListingDraft, PriceCheckResult, PriceType } from "@/lib/types";
 
 const euro = (cents: number | null) =>
@@ -26,8 +26,9 @@ export function PriceStep({
   const [check, setCheck] = useState<PriceCheckResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const autoRan = useRef(false);
 
-  async function runCheck() {
+  async function runCheck(autoApply = false) {
     setBusy(true);
     setError(null);
     try {
@@ -39,13 +40,29 @@ export function PriceStep({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Preis-Check fehlgeschlagen.");
-      setCheck(data as PriceCheckResult);
+      const result = data as PriceCheckResult;
+      setCheck(result);
+      // Beim automatischen Check den Vorschlag direkt übernehmen – aber nur, solange der Nutzer noch
+      // keinen Preis gesetzt hat (manuell Getipptes nie überschreiben).
+      if (autoApply && result.suggestedCents != null && priceEuros === 0) {
+        onPriceEuros(Math.round(result.suggestedCents / 100));
+        onPriceType(result.suggestedType);
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
   }
+
+  // Preis-Check automatisch beim Betreten des Schritts starten (einmal) und den Vorschlag
+  // vorausfüllen, solange noch kein Preis feststeht. Spart „Vergleichen" + „Vorschlag übernehmen".
+  useEffect(() => {
+    if (autoRan.current) return;
+    autoRan.current = true;
+    if (priceType !== "FREE" && priceEuros === 0) void runCheck(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const canContinue = priceType === "FREE" || priceEuros > 0;
 
@@ -90,8 +107,12 @@ export function PriceStep({
       <div className="rounded-xl border bg-white p-4">
         <div className="flex items-center justify-between">
           <span className="text-sm font-semibold text-gray-700">Preis-Check</span>
-          <button onClick={runCheck} disabled={busy} className="text-sm text-brand disabled:opacity-40">
-            {busy ? "Suche …" : "Vergleichen"}
+          <button
+            onClick={() => runCheck(false)}
+            disabled={busy}
+            className="text-sm text-brand disabled:opacity-40"
+          >
+            {busy ? "Suche …" : check ? "Neu vergleichen" : "Vergleichen"}
           </button>
         </div>
 
@@ -128,7 +149,12 @@ export function PriceStep({
             )}
           </div>
         )}
-        {!check && !error && (
+        {busy && !check && (
+          <p className="mt-2 text-xs text-gray-400">
+            Preis wird geschätzt – ähnliche Anzeigen werden gesucht …
+          </p>
+        )}
+        {!busy && !check && !error && (
           <p className="mt-2 text-xs text-gray-400">
             Sucht ähnliche Anzeigen auf Kleinanzeigen und schätzt eine Preisspanne.
           </p>

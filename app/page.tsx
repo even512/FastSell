@@ -41,6 +41,12 @@ export default function Home() {
     setStep("review");
   }
 
+  // On-demand berechneter Freisteller für Foto i: speichern und direkt auswählen.
+  function onCutout(i: number, dataUrl: string) {
+    setPhotos((arr) => arr.map((p, idx) => (idx === i ? { ...p, cutout: dataUrl } : p)));
+    setVariant((arr) => arr.map((v, idx) => (idx === i ? "cutout" : v)));
+  }
+
   function reset() {
     setPhotos([]);
     setVariant([]);
@@ -131,6 +137,7 @@ export default function Home() {
                 photos={photos}
                 variant={variant}
                 onVariant={(i, v) => setVariant((arr) => arr.map((x, idx) => (idx === i ? v : x)))}
+                onCutout={onCutout}
                 listing={listing}
                 onListing={setListing}
                 onBack={reset}

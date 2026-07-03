@@ -52,14 +52,13 @@ function toDataUrl(buf: Buffer): string {
 }
 
 /**
- * Verarbeitet ein Foto zu beiden Varianten (als data-URLs für die UI).
+ * Verarbeitet ein Foto zur optimierten Variante (als data-URL für die UI). Der Freisteller wird
+ * NICHT mehr eager berechnet (spart CPU/Zeit auf dem Server) – er entsteht on-demand über
+ * `cutoutFromDataUrl` bzw. die Route `/api/cutout`, sobald der Nutzer die Variante wählt.
  */
 export async function processPhoto(input: Buffer): Promise<ProcessedPhoto> {
-  const [optimized, cutout] = await Promise.all([optimizePhoto(input), cutoutPhoto(input)]);
-  return {
-    optimized: toDataUrl(optimized),
-    cutout: cutout ? toDataUrl(cutout) : null,
-  };
+  const optimized = await optimizePhoto(input);
+  return { optimized: toDataUrl(optimized), cutout: null };
 }
 
 /**
@@ -67,6 +66,17 @@ export async function processPhoto(input: Buffer): Promise<ProcessedPhoto> {
  */
 export async function processPhotos(inputs: Buffer[]): Promise<ProcessedPhoto[]> {
   return Promise.all(inputs.map(processPhoto));
+}
+
+/**
+ * Erzeugt den Freisteller für ein bereits optimiertes Foto (data-URL rein, data-URL oder null raus).
+ * Grundlage der on-demand-Berechnung: der Freisteller wird erst gerechnet, wenn der Nutzer ihn wählt.
+ * Wirft nicht – bei fehlendem Modell / Fehler liefert `cutoutPhoto` null zurück.
+ */
+export async function cutoutFromDataUrl(dataUrl: string): Promise<string | null> {
+  const { base64 } = parseDataUrl(dataUrl);
+  const cutout = await cutoutPhoto(Buffer.from(base64, "base64"));
+  return cutout ? toDataUrl(cutout) : null;
 }
 
 /** Zerlegt eine data-URL in mediaType + base64 (für Claude Vision + zum Speichern). */
