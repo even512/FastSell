@@ -210,41 +210,102 @@ function scoreCat(target: string, candidate: string): number {
  * (v. a. die Elternkategorie) aus und bevorzugt bei Gleichstand den kürzeren = spezifischeren Namen.
  * Gibt den tatsächlich geklickten Text zurück (oder null).
  */
+interface CatLink {
+  text: string;
+  path: string | null; // z. B. "161/279" aus href …#?path=161/279&…
+  isParent: boolean;
+}
+
+function parseCatPath(href: string): string | null {
+  const m = href.match(/[?&]path=([^&]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+/** Sammelt sichtbare Kategorie-Links samt Pfad + isParent (aus dem href). */
+async function collectCatLinks(page: Page): Promise<CatLink[]> {
+  const raw = await page.evaluate(() => {
+    const els = Array.from(document.querySelectorAll('a[href], [role="link"], [role="button"]'));
+    return els
+      .filter((el) => (el as HTMLElement).offsetParent !== null && (el.textContent || "").trim())
+      .map((el) => ({
+        text: (el.textContent || "").trim().replace(/\s+/g, " "),
+        href: el.getAttribute("href") || "",
+      }));
+  });
+  return raw.map((c) => ({
+    text: c.text,
+    path: parseCatPath(c.href),
+    isParent: /isparent=true/i.test(c.href),
+  }));
+}
+
+/**
+ * Wählt die am besten passende Kategorie und klickt sie. Zweig-bewusst: bei gesetztem currentPath
+ * werden nur direkte Kinder davon berücksichtigt (KA zeigt den Baum mehrspaltig – so landet z. B.
+ * „Zubehör" unter der richtigen Elternkategorie statt bei einer gleichnamigen Schwester). Schließt
+ * Geklicktes aus, bevorzugt bei Gleichstand den spezifischeren (kürzeren) Namen.
+ */
 async function clickBestCategory(
   page: Page,
   target: string,
   clicked: Set<string>,
-): Promise<string | null> {
-  const cands: string[] = await page.evaluate(() => {
-    const els = Array.from(document.querySelectorAll('a[href], [role="link"], [role="button"]'));
-    return els
-      .filter((el) => (el as HTMLElement).offsetParent !== null && (el.textContent || "").trim())
-      .map((el) => (el.textContent || "").trim().replace(/\s+/g, " "));
-  });
-  let best: string | null = null;
+  currentPath: string | null,
+): Promise<CatLink | null> {
+  const links = await collectCatLinks(page);
+  let pool = links;
+  if (currentPath) {
+    const wantDepth = currentPath.split("/").length + 1;
+    const children = links.filter(
+      (c) => c.path && c.path.startsWith(`${currentPath}/`) && c.path.split("/").length === wantDepth,
+    );
+    if (children.length) pool = children; // nur direkte Kinder des aktuellen Zweigs
+  }
+  let best: CatLink | null = null;
   let bestScore = 0;
   let bestLenDiff = Number.POSITIVE_INFINITY;
   const tLen = normCat(target).length;
-  for (const text of cands) {
-    if (clicked.has(text)) continue;
-    const s = scoreCat(target, text);
+  for (const c of pool) {
+    if (clicked.has(c.text)) continue;
+    const s = scoreCat(target, c.text);
     if (s < 30) continue;
-    const lenDiff = Math.abs(normCat(text).length - tLen);
+    const lenDiff = Math.abs(normCat(c.text).length - tLen);
     if (s > bestScore || (s === bestScore && lenDiff < bestLenDiff)) {
-      best = text;
+      best = c;
       bestScore = s;
       bestLenDiff = lenDiff;
     }
   }
   if (!best) return null;
-  const ok = await clickExactText(page, best);
-  if (ok) clicked.add(best);
+  const ok = await clickExactText(page, best.text);
+  if (ok) clicked.add(best.text);
   return ok ? best : null;
 }
 
+/** Fallback für die Blatt-Vervollständigung: klickt irgendein Blatt-Kind des aktuellen Zweigs. */
+async function clickFirstLeaf(
+  page: Page,
+  clicked: Set<string>,
+  currentPath: string | null,
+): Promise<CatLink | null> {
+  if (!currentPath) return null;
+  const wantDepth = currentPath.split("/").length + 1;
+  const leaf = (await collectCatLinks(page)).find(
+    (c) =>
+      !c.isParent &&
+      c.path &&
+      c.path.startsWith(`${currentPath}/`) &&
+      c.path.split("/").length === wantDepth &&
+      !clicked.has(c.text),
+  );
+  if (!leaf) return null;
+  const ok = await clickExactText(page, leaf.text);
+  if (ok) clicked.add(leaf.text);
+  return ok ? leaf : null;
+}
+
 /**
- * Klickt den Kategorie-Pfad durch (z. B. „Musik, Filme & Bücher > Musik & CDs"). Kleinanzeigen
- * startet das Aufgeben mit einer Kategorie-Auswahl; das Formular erscheint erst nach der Wahl einer
+ * Klickt den Kategorie-Pfad durch (z. B. „Elektronik > Konsolen > Zubehör"). Kleinanzeigen startet
+ * das Aufgeben mit einer Kategorie-Auswahl; das Formular erscheint erst nach der Wahl einer
  * Blatt-Kategorie und „Weiter".
  */
 async function selectCategory(
@@ -257,16 +318,38 @@ async function selectCategory(
     .map((s) => s.trim())
     .filter(Boolean);
   const clicked = new Set<string>();
+  let currentPath: string | null = null;
+  let lastIsParent = true;
+
+  const formPresent = async () => (await page.locator(TITLE_SEL).count().catch(() => 0)) > 0;
+
   for (const part of parts) {
-    // Sind wir schon im Formular? Dann keine Kategorie mehr nötig.
-    if ((await page.locator(TITLE_SEL).count().catch(() => 0)) > 0) return;
-    const picked = await clickBestCategory(page, part, clicked);
+    if (await formPresent()) return;
+    const picked = await clickBestCategory(page, part, clicked, currentPath);
     onProgress({
       step: "category",
       status: "running",
-      message: picked ? `Kategorie: „${picked}" …` : `Kategorie „${part}" nicht gefunden …`,
+      message: picked ? `Kategorie: „${picked.text}" …` : `Kategorie „${part}" nicht gefunden …`,
     });
     if (!picked) return; // nichts Passendes – der Aufrufer meldet später ehrlich inkl. Diagnose
+    if (picked.path) currentPath = picked.path;
+    lastIsParent = picked.isParent;
+    await page.waitForLoadState("domcontentloaded").catch(() => {});
+    await randomDelay(500, 1200);
+  }
+
+  // Blatt-Vervollständigung: KA braucht eine Blatt-Kategorie. Ist die letzte Wahl noch ein Parent
+  // (Claudes Pfad zu kurz), weiter in ein Blatt drillen – passend zum letzten Pfadteil.
+  const lastPart = parts[parts.length - 1] ?? "";
+  for (let i = 0; i < 3 && lastIsParent; i++) {
+    if (await formPresent()) return;
+    const picked =
+      (await clickBestCategory(page, lastPart, clicked, currentPath)) ??
+      (await clickFirstLeaf(page, clicked, currentPath));
+    if (!picked) break;
+    onProgress({ step: "category", status: "running", message: `Unterkategorie: „${picked.text}" …` });
+    if (picked.path) currentPath = picked.path;
+    lastIsParent = picked.isParent;
     await page.waitForLoadState("domcontentloaded").catch(() => {});
     await randomDelay(500, 1200);
   }
