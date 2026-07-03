@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright";
 import { chromium } from "playwright-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import { chooseCategoryOption, type CategoryProduct } from "./categorize";
 import { parseDataUrl } from "./images";
 import { loadStorageState } from "./session";
 import type { PublishProgress, PublishRequest } from "./types";
@@ -214,6 +215,7 @@ interface CatLink {
   text: string;
   path: string | null; // z. B. "161/279" aus href …#?path=161/279&…
   isParent: boolean;
+  id: string; // z. B. "cat_279" – für robustes Klicken per #id (Text als Fallback)
 }
 
 function parseCatPath(href: string): string | null {
@@ -230,13 +232,51 @@ async function collectCatLinks(page: Page): Promise<CatLink[]> {
       .map((el) => ({
         text: (el.textContent || "").trim().replace(/\s+/g, " "),
         href: el.getAttribute("href") || "",
+        id: (el as HTMLElement).id || "",
       }));
   });
   return raw.map((c) => ({
     text: c.text,
     path: parseCatPath(c.href),
     isParent: /isparent=true/i.test(c.href),
+    id: c.id,
   }));
+}
+
+/** Klickt eine Kategorie-Verknüpfung robust: bevorzugt per #id, Fallback über den sichtbaren Text. */
+async function clickCatLink(page: Page, link: CatLink): Promise<boolean> {
+  if (link.id) {
+    const byId = page.locator(`[id="${link.id}"]`).first();
+    if ((await byId.count().catch(() => 0)) > 0) {
+      try {
+        await byId.click({ timeout: FIELD_TIMEOUT });
+        return true;
+      } catch {
+        /* Fallback auf Text */
+      }
+    }
+  }
+  return clickExactText(page, link.text);
+}
+
+/**
+ * Direkte Kinder des aktuellen Pfads (zweig-bewusst, dedupliziert nach Pfad). Ohne currentPath =
+ * oberste Ebene (Pfad-Tiefe 1). KA zeigt den Baum mehrspaltig – so bekommt jede Ebene nur ihre
+ * echten Optionen (kein Abdriften in eine gleichnamige Schwester eines anderen Zweigs).
+ */
+function childOptions(links: CatLink[], currentPath: string | null): CatLink[] {
+  const wantDepth = currentPath ? currentPath.split("/").length + 1 : 1;
+  const seen = new Set<string>();
+  const out: CatLink[] = [];
+  for (const c of links) {
+    if (!c.path) continue;
+    if (currentPath && !c.path.startsWith(`${currentPath}/`)) continue;
+    if (c.path.split("/").length !== wantDepth) continue;
+    if (seen.has(c.path)) continue;
+    seen.add(c.path);
+    out.push(c);
+  }
+  return out;
 }
 
 /**
@@ -254,10 +294,7 @@ async function clickBestCategory(
   const links = await collectCatLinks(page);
   let pool = links;
   if (currentPath) {
-    const wantDepth = currentPath.split("/").length + 1;
-    const children = links.filter(
-      (c) => c.path && c.path.startsWith(`${currentPath}/`) && c.path.split("/").length === wantDepth,
-    );
+    const children = childOptions(links, currentPath);
     if (children.length) pool = children; // nur direkte Kinder des aktuellen Zweigs
   }
   let best: CatLink | null = null;
@@ -276,7 +313,7 @@ async function clickBestCategory(
     }
   }
   if (!best) return null;
-  const ok = await clickExactText(page, best.text);
+  const ok = await clickCatLink(page, best);
   if (ok) clicked.add(best.text);
   return ok ? best : null;
 }
@@ -288,27 +325,114 @@ async function clickFirstLeaf(
   currentPath: string | null,
 ): Promise<CatLink | null> {
   if (!currentPath) return null;
-  const wantDepth = currentPath.split("/").length + 1;
-  const leaf = (await collectCatLinks(page)).find(
-    (c) =>
-      !c.isParent &&
-      c.path &&
-      c.path.startsWith(`${currentPath}/`) &&
-      c.path.split("/").length === wantDepth &&
-      !clicked.has(c.text),
+  const leaf = childOptions(await collectCatLinks(page), currentPath).find(
+    (c) => !c.isParent && !clicked.has(c.text),
   );
   if (!leaf) return null;
-  const ok = await clickExactText(page, leaf.text);
+  const ok = await clickCatLink(page, leaf);
   if (ok) clicked.add(leaf.text);
   return ok ? leaf : null;
 }
 
+export type CategoryChooser = (product: CategoryProduct, options: string[]) => Promise<number>;
+
 /**
- * Klickt den Kategorie-Pfad durch (z. B. „Elektronik > Konsolen > Zubehör"). Kleinanzeigen startet
- * das Aufgeben mit einer Kategorie-Auswahl; das Formular erscheint erst nach der Wahl einer
- * Blatt-Kategorie und „Weiter".
+ * Wählt die Kategorie **dynamisch mit Claude**: navigiert KAs echten (mehrspaltigen) Baum Ebene für
+ * Ebene und lässt auf jeder Ebene aus den *tatsächlich vorhandenen* Optionen die passende wählen –
+ * unabhängig von Produkt und Kategorietiefe. `chooser` ist injizierbar (für Tests). Fällt auf die
+ * Pfad-Heuristik (`selectCategoryByPath`) zurück, wenn kein KI-Zugang besteht (kein API-Key /
+ * FASTSELL_MOCK) oder die KI eine Ebene nicht entscheiden kann.
  */
-async function selectCategory(
+export async function selectCategory(
+  page: Page,
+  req: PublishRequest,
+  onProgress: (p: PublishProgress) => void,
+  chooser: CategoryChooser = chooseCategoryOption,
+): Promise<void> {
+  const product: CategoryProduct = {
+    title: req.title,
+    description: req.description,
+    attributes: req.attributes,
+    hint: req.category, // von Claude vermutete Kategorie – nur ein Hinweis
+  };
+  const fallbackParts = (req.category || "")
+    .split(">")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const formPresent = async () => (await page.locator(TITLE_SEL).count().catch(() => 0)) > 0;
+
+  const clicked = new Set<string>();
+  let currentPath: string | null = null;
+
+  for (let level = 0; level < 6; level++) {
+    if (await formPresent()) return;
+    const links = await collectCatLinks(page);
+    const options: CatLink[] = childOptions(links, currentPath).filter((o) => !clicked.has(o.text));
+    if (options.length === 0) break; // keine weitere Ebene sichtbar → advanceToForm/Diagnose übernimmt
+
+    // Claude aus den ECHTEN Optionen dieser Ebene wählen lassen.
+    let idx = -1;
+    try {
+      idx = await chooser(
+        product,
+        options.map((o) => o.text),
+      );
+    } catch {
+      // Kein KI-Zugang o. Ä.: komplett auf die Pfad-Heuristik umschalten (nur am Anfang sinnvoll).
+      if (level === 0) {
+        onProgress({
+          step: "category",
+          status: "running",
+          message: "KI-Kategorieauswahl nicht verfügbar – nutze Kategorie-Pfad …",
+        });
+        await selectCategoryByPath(page, req.category || "", onProgress);
+        return;
+      }
+      idx = -1; // mitten im Baum: unten greift die pro-Ebene-Heuristik
+    }
+
+    let picked: CatLink | null = null;
+    if (idx >= 0 && idx < options.length) {
+      const target = options[idx];
+      if (await clickCatLink(page, target)) {
+        clicked.add(target.text);
+        picked = target;
+      }
+    }
+
+    // KI unsicher (-1) oder Klick misslang → zweig-bewusster Heuristik-Fallback für diese Ebene.
+    if (!picked) {
+      const part = fallbackParts[level] ?? fallbackParts[fallbackParts.length - 1] ?? "";
+      picked =
+        (part ? await clickBestCategory(page, part, clicked, currentPath) : null) ??
+        (await clickFirstLeaf(page, clicked, currentPath));
+    }
+
+    if (!picked) {
+      // Nichts wählbar → ehrlicher Abbruch über den Aufrufer (Diagnose zeigt die echten Optionen).
+      onProgress({
+        step: "category",
+        status: "running",
+        message: "Keine passende Kategorie gefunden …",
+      });
+      return;
+    }
+
+    onProgress({ step: "category", status: "running", message: `Kategorie: „${picked.text}" …` });
+    if (picked.path) currentPath = picked.path;
+    if (!picked.isParent) return; // Blatt erreicht → Kategorie vollständig
+    await page.waitForLoadState("domcontentloaded").catch(() => {});
+    await randomDelay(500, 1200);
+  }
+}
+
+/**
+ * Fallback: klickt einen vorab geratenen Kategorie-Pfad durch (z. B. „Elektronik > Konsolen >
+ * Zubehör") per unscharfem Text-Matching. Wird genutzt, wenn keine KI-Auswahl verfügbar ist.
+ * Kleinanzeigen startet das Aufgeben mit einer Kategorie-Auswahl; das Formular erscheint erst nach
+ * der Wahl einer Blatt-Kategorie und „Weiter".
+ */
+async function selectCategoryByPath(
   page: Page,
   categoryPath: string,
   onProgress: (p: PublishProgress) => void,
@@ -453,13 +577,16 @@ export async function publishListing(
     }
 
     // Kategorie-Auswahl: Kleinanzeigen zeigt zuerst eine Kategorieseite; das Formular kommt danach.
-    if ((await page.locator(TITLE_SEL).count().catch(() => 0)) === 0 && req.category) {
+    // Claude navigiert den echten Baum dynamisch (Fallback: geratener Pfad aus req.category).
+    if ((await page.locator(TITLE_SEL).count().catch(() => 0)) === 0) {
       onProgress({
         step: "category",
         status: "running",
-        message: `Kategorie wird gewählt: ${req.category} …`,
+        message: req.category
+          ? `Kategorie wird gewählt (Vorschlag: ${req.category}) …`
+          : "Kategorie wird gewählt …",
       });
-      await selectCategory(page, req.category, onProgress);
+      await selectCategory(page, req, onProgress);
       // Nach der Kategorie via „Weiter" zum eigentlichen Formular (Schritt 2).
       await advanceToForm(page, onProgress);
       await randomDelay(400, 1000);

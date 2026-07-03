@@ -44,6 +44,7 @@ Auf dem Handy: im selben Netz die LAN-IP des Rechners öffnen (z. B. `http://192
 | --- | --- | --- |
 | `ANTHROPIC_API_KEY` | Claude für Erkennung + Text | – (erforderlich) |
 | `FASTSELL_MODEL` | Modell-Override | `claude-opus-4-8` |
+| `FASTSELL_CATEGORY_MODEL` | Modell für die dynamische Kategorie-Auswahl beim Posten | `claude-haiku-4-5` |
 | `FASTSELL_ENC_KEY` | 32-Byte-Hex-Key für Login-Verschlüsselung | auto in `data/session.key` |
 | `FASTSELL_POSTER_HEADLESS` | Poster headless (`true`/`false`) | `false` |
 | `FASTSELL_NEW_AD_URL` | Einstieg-URL zum Anzeigen-Aufgeben (Override) | Kleinanzeigen-Standard |
@@ -81,6 +82,14 @@ Das Einstellen braucht einen gespeicherten Kleinanzeigen-Login. Im **„Konto"-S
 rechts) startest du ihn: `POST /api/login` öffnet einen sichtbaren Browser; dort einmal einloggen
 (inkl. evtl. Sicherheitsabfrage). Die Session wird **AES-256-GCM-verschlüsselt** lokal gespeichert
 (kein Passwort im Klartext). Danach postet `/api/publish` mit dieser Session.
+
+**Kategorie wird dynamisch gewählt:** Kleinanzeigen verlangt vor dem Formular eine Kategorie. Statt
+einen vorab geratenen Pfad unscharf zu matchen, navigiert Claude den **echten** Kategoriebaum live
+Ebene für Ebene und wählt auf jeder Ebene aus den **tatsächlich vorhandenen** Optionen – so
+funktioniert es für beliebige Produkte und Kategorietiefen. Die live gewählten Ebenen erscheinen im
+Fortschritt („Kategorie: … "). Modell dafür: `FASTSELL_CATEGORY_MODEL` (Default `claude-haiku-4-5`,
+günstig/schnell). Ohne API-Zugang fällt der Poster automatisch auf die von Claude in der Anzeige
+vorgeschlagene Kategorie als Pfad zurück.
 
 Der Login **crasht nicht**, wenn etwas schiefläuft: Zeigt Kleinanzeigen statt der Login-Seite eine
 Bot-Wall/Sicherheitsabfrage (typisch von Server-/Rechenzentrums-IPs) oder läuft die Wartezeit ab,
