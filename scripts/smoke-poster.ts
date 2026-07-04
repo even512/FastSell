@@ -51,7 +51,10 @@ async function runCase(
   const req: PublishRequest = {
     title: `Testartikel ${priceType}`,
     category: "", // leer -> Kategorie-Auswahl wird übersprungen (Mock zeigt sofort das Formular)
-    condition: "",
+    // Öffnet im Mock den MODALEN Zustand-Dialog (wie auf der echten Seite). Der Test stellt
+    // sicher, dass er per „Bestätigen" geschlossen wird – sonst blockiert sein Backdrop
+    // Preisart und Submit (realer Fehlerfall vom ersten Live-Lauf).
+    condition: "Gut",
     description: "Testbeschreibung. Nur Abholung.",
     attributes: [],
     priceType,
@@ -73,10 +76,16 @@ async function runCase(
     throw new Error(`${priceType}: Preisart im Formular = ${gotPt}, erwartet ${expectPriceType}`);
   if (gotShip !== "PICKUP")
     throw new Error(`${priceType}: Versand im Formular = ${gotShip}, erwartet PICKUP`);
+  const gotCond = url.searchParams.get("condition");
+  if (gotCond !== "Gut")
+    throw new Error(
+      `${priceType}: Zustand im Formular = ${gotCond}, erwartet Gut ` +
+        "(Dialog nicht per „Bestätigen“ geschlossen?)",
+    );
   const warned = events.filter((e) => e.message.startsWith("⚠"));
   if (warned.length)
     throw new Error(`${priceType}: Warnungen: ${warned.map((w) => w.message).join("; ")}`);
-  console.log(`✅ ${priceType}: Preisart=${gotPt}, Versand=${gotShip}\n`);
+  console.log(`✅ ${priceType}: Preisart=${gotPt}, Versand=${gotShip}, Zustand=${gotCond}\n`);
 }
 
 async function main() {
