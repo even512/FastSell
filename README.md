@@ -45,6 +45,7 @@ Auf dem Handy: im selben Netz die LAN-IP des Rechners öffnen (z. B. `http://192
 | `ANTHROPIC_API_KEY` | Claude für Erkennung + Text | – (erforderlich) |
 | `FASTSELL_MODEL` | Modell-Override | `claude-opus-4-8` |
 | `FASTSELL_CATEGORY_MODEL` | Modell für die dynamische Kategorie-Auswahl beim Posten | `claude-haiku-4-5` |
+| `FASTSELL_CUTOUT_MODEL` | Freisteller-Modell `medium`/`small` (small = schneller auf CPU) | `medium` |
 | `FASTSELL_ENC_KEY` | 32-Byte-Hex-Key für Login-Verschlüsselung | auto in `data/session.key` |
 | `FASTSELL_POSTER_HEADLESS` | Poster headless (`true`/`false`) | `false` |
 | `FASTSELL_NEW_AD_URL` | Einstieg-URL zum Anzeigen-Aufgeben (Override) | Kleinanzeigen-Standard |

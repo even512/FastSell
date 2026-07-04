@@ -120,22 +120,30 @@ async function describeForm(page: Page): Promise<string> {
     const info = await page.evaluate(() => {
       const visible = (el: Element) =>
         (el as HTMLElement).offsetParent !== null || el.getAttribute("type") === "file";
+      // Kleinanzeigen versteckt Radios/Checkboxen hinter gestylten Labels – für die Diagnose sind
+      // gerade diese unsichtbaren Controls wichtig (Preisart/Versand), daher mit aufnehmen.
+      const relevant = (el: Element) => {
+        if (visible(el)) return true;
+        const type = el.getAttribute("type") || "";
+        return type === "radio" || type === "checkbox" || el.tagName === "SELECT";
+      };
       const controls = Array.from(document.querySelectorAll("input, textarea, select, button"));
       const rows = controls
-        .filter(visible)
-        .slice(0, 40)
+        .filter(relevant)
+        .slice(0, 60)
         .map((el) => {
           const type = el.getAttribute("type") || "";
           const id = (el as HTMLElement).id || "";
           const name = el.getAttribute("name") || "";
           const ph = el.getAttribute("placeholder") || "";
+          const hidden = visible(el) ? "" : " (versteckt)";
           const label = (el.getAttribute("aria-label") || el.textContent || "")
             .trim()
             .replace(/\s+/g, " ")
             .slice(0, 40);
           return (
             `${el.tagName.toLowerCase()}${type ? `[${type}]` : ""} ` +
-            `id=${id || "-"} name=${name || "-"}${ph ? ` ph="${ph}"` : ""}${label ? ` · ${label}` : ""}`
+            `id=${id || "-"} name=${name || "-"}${ph ? ` ph="${ph}"` : ""}${label ? ` · ${label}` : ""}${hidden}`
           );
         });
       // Klickbares (Links/Kategorien) – Kategorien sind oft <a>, nicht Formularfelder.
@@ -514,6 +522,37 @@ async function selectFromDropdown(page: Page, triggerRe: RegExp, optionText: str
 }
 
 /**
+ * Klickt ein Control robust: normaler Klick, sonst das zugehörige Label (Kleinanzeigen versteckt
+ * Radio-/Checkbox-Inputs hinter gestylten Labels – Playwright kann unsichtbare Inputs nicht
+ * klicken), zuletzt JS-Klick direkt am Element. Rückgabe: konnte geklickt werden?
+ */
+async function clickControl(page: Page, selector: string): Promise<boolean> {
+  const el = page.locator(selector).first();
+  if ((await el.count().catch(() => 0)) === 0) return false;
+  try {
+    await el.click({ timeout: FIELD_TIMEOUT });
+    return true;
+  } catch {
+    /* Label / JS versuchen */
+  }
+  const id = await el.getAttribute("id").catch(() => null);
+  if (id) {
+    try {
+      await page.locator(`label[for="${id}"]`).first().click({ timeout: FIELD_TIMEOUT });
+      return true;
+    } catch {
+      /* JS versuchen */
+    }
+  }
+  try {
+    await el.evaluate((node) => (node as HTMLElement).click());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Setzt eine Checkbox/einen Switch (per sichtbarem Namen) auf checked und liest den Zustand zurück.
  * Rückgabe: true/false = tatsächlicher Zustand danach, null = Control nicht gefunden.
  */
@@ -533,48 +572,130 @@ async function setToggle(page: Page, nameRe: RegExp, checked: boolean): Promise<
 }
 
 /**
- * Setzt die Preisart zuverlässig und **meldet** das Ergebnis (statt still zu scheitern wie bisher).
- * Mehr-Strategie über sichtbare Labels/Rollen: Checkbox/Switch „VB"/„Zu verschenken", sonst Klick auf
- * das Label, sonst Custom-Dropdown-Fallback. Bei Misserfolg eine sichtbare, nicht-fatale Warnung.
+ * Wählt den Zustand (bei vielen Kategorien Pflicht – ohne ihn scheitert das Absenden). Erst über
+ * einen Button mit „Zustand" im Namen, sonst über das Label `for*="condition"` und den darauf
+ * folgenden Button (aktuelles Formular); die Option dann per Text oder Radio-Rolle. Best effort.
+ */
+async function selectCondition(page: Page, condition: string): Promise<boolean> {
+  if (await selectFromDropdown(page, /zustand/i, condition)) return true;
+
+  const label = page.locator('label[for*="condition" i]').first();
+  if ((await label.count().catch(() => 0)) === 0) return false;
+  const trigger = label.locator("xpath=following::button[1]");
+  try {
+    await trigger.click({ timeout: FIELD_TIMEOUT });
+  } catch {
+    return false;
+  }
+  await randomDelay(250, 600);
+  if (await clickExactText(page, condition)) return true;
+  const radio = page.getByRole("radio", { name: new RegExp(condition, "i") }).first();
+  if ((await radio.count().catch(() => 0)) > 0) {
+    await radio.check({ timeout: FIELD_TIMEOUT }).catch(() => {});
+    if (await radio.isChecked().catch(() => false)) {
+      // Auswahl-Dialoge haben oft einen Bestätigen-Button.
+      await page
+        .getByRole("button", { name: /übernehmen|bestätigen|fertig|ok/i })
+        .first()
+        .click({ timeout: 2000 })
+        .catch(() => {});
+      return true;
+    }
+  }
+  await page.keyboard.press("Escape").catch(() => {});
+  return false;
+}
+
+// Preisart-Mapping auf das Kleinanzeigen-Formular: Menü-Index des #ad-price-type-Dropdowns
+// (0=Festpreis, 1=VB, 2=Zu verschenken) und der Formular-Wert für <select>/Legacy-Radios.
+const PRICE_TYPES: Record<PriceType, { label: string; menuIdx: number; value: string }> = {
+  FIXED: { label: "Festpreis", menuIdx: 0, value: "FIXED" },
+  VB: { label: "VB", menuIdx: 1, value: "NEGOTIABLE" },
+  FREE: { label: "Zu verschenken", menuIdx: 2, value: "GIVE_AWAY" },
+};
+
+/**
+ * Setzt die Preisart (Festpreis/VB/Zu verschenken) und **meldet** das Ergebnis. Primär über das
+ * aktuelle Custom-Dropdown `#ad-price-type` mit den Optionen `#ad-price-type-menu-option-{0,1,2}`,
+ * danach Fallbacks für ältere Formular-Varianten (natives <select>, Radios `name="priceType"`,
+ * Text/Toggle). Bei Misserfolg eine sichtbare, nicht-fatale Warnung.
  */
 async function setPriceType(
   page: Page,
   type: PriceType,
   onProgress: (p: PublishProgress) => void,
 ): Promise<void> {
-  const done = (label: string) =>
+  const { label, menuIdx, value } = PRICE_TYPES[type];
+  const done = () =>
     onProgress({ step: "price", status: "running", message: `Preisart: ${label} gesetzt` });
-  const warn = (label: string) =>
+  const warn = () =>
     onProgress({
       step: "price",
       status: "running",
       message: `⚠ Preisart konnte nicht auf ${label} gesetzt werden – bitte in der Anzeige prüfen.`,
     });
 
+  // 1) Aktuelles Formular: #ad-price-type. Meist ein Dropdown-Button mit Menü-Optionen; falls es
+  //    doch ein natives <select> ist, direkt darüber wählen.
+  const trigger = page.locator("#ad-price-type").first();
+  if ((await trigger.count().catch(() => 0)) > 0) {
+    const tag = await trigger.evaluate((el) => el.tagName.toLowerCase()).catch(() => "");
+    if (tag === "select") {
+      const picked = await trigger
+        .selectOption({ value })
+        .catch(() => trigger.selectOption({ label }))
+        .catch(() => null);
+      if (picked) return done();
+    } else {
+      try {
+        await trigger.click({ timeout: FIELD_TIMEOUT });
+        await randomDelay(250, 600);
+        const option = page.locator(`#ad-price-type-menu-option-${menuIdx}`).first();
+        await option.waitFor({ state: "visible", timeout: FIELD_TIMEOUT });
+        await option.click({ timeout: FIELD_TIMEOUT });
+        return done();
+      } catch {
+        await page.keyboard.press("Escape").catch(() => {});
+      }
+    }
+  }
+
+  // 2) Natives <select> unter anderem Namen/ID (ältere Formular-Variante).
+  const select = page
+    .locator('#priceType, select[name*="priceType" i], select[id*="price-type" i]')
+    .first();
+  if ((await select.count().catch(() => 0)) > 0) {
+    const picked = await select
+      .selectOption({ value })
+      .catch(() => select.selectOption({ label }))
+      .catch(() => null);
+    if (picked) return done();
+  }
+
+  // 3) Legacy-Radios (verstecktes Input + gestyltes Label).
+  const radioSel = `input[name="priceType"][value="${value}"]`;
+  if ((await page.locator(radioSel).count().catch(() => 0)) > 0 && (await clickControl(page, radioSel))) {
+    const checked = await page.locator(radioSel).first().isChecked().catch(() => null);
+    if (checked !== false) return done();
+  }
+
+  // 4) Letzte Stufe: Toggle-/Text-Heuristiken (historische Varianten).
   if (type === "FIXED") {
-    // Festpreis ist der KA-Default; nur sicherstellen, dass ein evtl. VB-Schalter nicht aktiv ist.
     await setToggle(page, /^vb$|verhandlungsbasis/i, false);
-    return done("Festpreis");
+    return done(); // Festpreis ist der KA-Default
   }
-  if (type === "VB") {
-    const t = await setToggle(page, /^vb$|verhandlungsbasis/i, true);
-    if (t === true) return done("VB");
-    if (t === null && (await clickExactText(page, "VB"))) return done("VB");
-    if (t === null && (await selectFromDropdown(page, /preistyp|festpreis/i, "VB"))) return done("VB");
-    return warn("VB");
-  }
-  // FREE
-  const f = await setToggle(page, /zu verschenken|verschenken/i, true);
-  if (f === true) return done("Zu verschenken");
-  if (f === null && (await clickExactText(page, "Zu verschenken"))) return done("Zu verschenken");
-  if (f === null && (await selectFromDropdown(page, /preistyp|festpreis|vb/i, "Zu verschenken")))
-    return done("Zu verschenken");
-  return warn("Zu verschenken");
+  const t = await setToggle(page, type === "VB" ? /^vb$|verhandlungsbasis/i : /zu verschenken|verschenken/i, true);
+  if (t === true) return done();
+  if (await clickExactText(page, label)) return done();
+  if (await selectFromDropdown(page, /preistyp|festpreis|vb/i, label)) return done();
+  return warn();
 }
 
 /**
- * Setzt die Versandart immer auf „Nur Abholung" und meldet das Ergebnis. Mehr-Strategie
- * (Radio/Button/Label, sonst „Versand"-Checkbox deaktivieren); best-effort, bricht den Post nicht ab.
+ * Setzt die Versandart immer auf „Nur Abholung" und meldet das Ergebnis. Das aktuelle Formular
+ * fragt „Versand?" mit Ja/Nein-Radios (`#ad-shipping-enabled-no` = nur Abholung) – der frühere
+ * Text „Nur Abholung" existiert dort nicht mehr. Danach Fallbacks für Combobox-/Select-/Legacy-
+ * Varianten; best-effort, bricht den Post nicht ab.
  */
 async function setShippingPickup(
   page: Page,
@@ -582,17 +703,66 @@ async function setShippingPickup(
 ): Promise<void> {
   const done = () => onProgress({ step: "shipping", status: "running", message: "Versand: Nur Abholung" });
 
-  // 1) Radio „Nur Abholung"
+  // 1) Aktuelles Formular: „Versand? Ja/Nein" – Nein = Nur Abholung.
+  const pickupNo = page.locator("#ad-shipping-enabled-no").first();
+  if ((await pickupNo.count().catch(() => 0)) > 0) {
+    if ((await pickupNo.isChecked().catch(() => false)) === true) return done();
+    if (await clickControl(page, "#ad-shipping-enabled-no")) {
+      // true = verifiziert; null = Zustand nicht lesbar (Button-Variante) -> Klick zählt.
+      if ((await pickupNo.isChecked().catch(() => null)) !== false) return done();
+    }
+  }
+
+  // 2) Versand-Combobox (v. a. gewerbliche Konten): öffnen und „Nur Abholung" wählen.
+  const combo = page
+    .locator(
+      'button[role="combobox"][id="versand"], button[role="combobox"][id$=".versand"], ' +
+        'button[role="combobox"][aria-labelledby$="versand-selected-option"]',
+    )
+    .first();
+  if ((await combo.count().catch(() => 0)) > 0) {
+    try {
+      await combo.click({ timeout: FIELD_TIMEOUT });
+      await randomDelay(250, 600);
+      if (await clickExactText(page, "Nur Abholung")) return done();
+      await page.keyboard.press("Escape").catch(() => {});
+    } catch {
+      /* nächste Strategie */
+    }
+  }
+
+  // 3) Versand als Kategorie-Attribut-<select> mit Option „Nur Abholung".
+  const attrSelect = page.locator('select:has(option:text-is("Nur Abholung"))').first();
+  if ((await attrSelect.count().catch(() => 0)) > 0) {
+    if (await attrSelect.selectOption({ label: "Nur Abholung" }).catch(() => null)) return done();
+  }
+
+  // 4) Legacy: Radio/Label/Text „Nur Abholung".
   const radio = page.getByRole("radio", { name: /nur abholung|^abholung/i }).first();
   if ((await radio.count().catch(() => 0)) > 0) {
     await radio.check({ timeout: FIELD_TIMEOUT }).catch(() => {});
     if (await radio.isChecked().catch(() => false)) return done();
   }
-  // 2) Button/Label „Nur Abholung"
   if (await clickExactText(page, "Nur Abholung")) return done();
-  // 3) „Versand"-Checkbox deaktivieren (falls Versand als opt-in Checkbox umgesetzt ist)
+
+  // 5) „Versand"-Checkbox deaktivieren (falls Versand als opt-in Checkbox umgesetzt ist).
   const versand = await setToggle(page, /versand möglich|^versand$/i, false);
   if (versand === false) return done();
+
+  // Kein Versand-Bereich in dieser Kategorie? Dann gilt ohnehin Abholung -> Info statt Warnung.
+  const hasShippingSection =
+    (await page
+      .locator('#ad-shipping-enabled, [id^="ad-shipping"], [name*="shipping" i]')
+      .count()
+      .catch(() => 0)) > 0;
+  if (!hasShippingSection) {
+    onProgress({
+      step: "shipping",
+      status: "running",
+      message: "Kategorie ohne Versandoption – Anzeige ist automatisch nur Abholung.",
+    });
+    return;
+  }
 
   onProgress({
     step: "shipping",
@@ -688,7 +858,7 @@ export async function publishListing(
 
     // Zustand (bei vielen Kategorien Pflicht) – Custom-Dropdown, best effort.
     if (req.condition) {
-      await selectFromDropdown(page, /zustand/i, req.condition).catch(() => {});
+      await selectCondition(page, req.condition).catch(() => {});
       await randomDelay(200, 600);
     }
 
@@ -746,13 +916,21 @@ export async function publishListing(
     await page.waitForLoadState("domcontentloaded").catch(() => {});
     await randomDelay(1500, 3000);
 
-    // Kleinanzeigen zeigt nach dem Absenden evtl. ein Upsell-Modal („Highlight buchen?"). Die
-    // kostenlose Variante bestätigen (best effort), damit die Anzeige wirklich rausgeht.
-    const upsell = page.getByRole("button", { name: /kostenlos|ohne highlight|^weiter$/i }).first();
-    if ((await upsell.count().catch(() => 0)) > 0) {
-      await upsell.click({ timeout: FIELD_TIMEOUT }).catch(() => {});
-      await page.waitForLoadState("domcontentloaded").catch(() => {});
-      await randomDelay(1000, 2000);
+    // Kleinanzeigen zeigt nach dem Absenden evtl. Upsell-Dialoge (aktuell „Effektiver verkaufen"
+    // mit „Ohne Hochschieben weiter", früher „Highlight buchen"). Kostenlos fortfahren (best
+    // effort) und dabei mehrfach auf die Bestätigungs-URL warten – das ist das sichere
+    // Erfolgssignal (…/p-anzeige-aufgeben-bestaetigung.html?adId=…).
+    const CONFIRM_RE = /p-anzeige-aufgeben-bestaetigung\.html/i;
+    for (let i = 0; i < 3 && !CONFIRM_RE.test(page.url()); i++) {
+      const upsell = page
+        .getByRole("button", { name: /ohne hochschieben|kostenlos|ohne highlight|^weiter$/i })
+        .or(page.locator('dialog[open] button:has-text("Ohne Hochschieben weiter")'))
+        .first();
+      if ((await upsell.count().catch(() => 0)) > 0) {
+        await upsell.click({ timeout: FIELD_TIMEOUT }).catch(() => {});
+        await page.waitForLoadState("domcontentloaded").catch(() => {});
+      }
+      await page.waitForURL(CONFIRM_RE, { timeout: 5000 }).catch(() => {});
     }
 
     if (await isBlocked(page)) {
@@ -766,13 +944,13 @@ export async function publishListing(
       return;
     }
 
-    // Erfolg VERIFIZIEREN statt behaupten: sind wir aus dem Formular raus?
+    // Erfolg VERIFIZIEREN statt behaupten.
     onProgress({ step: "verify", status: "running", message: "Veröffentlichung wird geprüft …" });
-    // Das Formular selbst liegt unter …/p-anzeige-aufgeben-schritt2.html – die URL taugt daher nicht
-    // als Erfolgssignal. Zuverlässig: das Titel-Feld ist weg = wir sind aus dem Formular raus.
-    const stillOnForm = await page.locator(TITLE_SEL).count().catch(() => 1);
     const finalUrl = page.url();
-    const published = stillOnForm === 0;
+    // Sicherstes Signal: die Bestätigungsseite. Fallback (falls Kleinanzeigen die URL ändert):
+    // das Titel-Feld ist weg = wir sind aus dem Formular raus.
+    const stillOnForm = await page.locator(TITLE_SEL).count().catch(() => 1);
+    const published = CONFIRM_RE.test(finalUrl) || stillOnForm === 0;
     if (!published) {
       await reportFailure(
         "verify",

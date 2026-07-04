@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "smoke:images": "tsx scripts/smoke-images.ts"
+    "smoke:images": "tsx scripts/smoke-images.ts",
+    "smoke:poster": "tsx scripts/smoke-poster.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.70.0",
