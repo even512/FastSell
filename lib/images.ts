@@ -1,8 +1,26 @@
+import { createRequire } from "node:module";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import sharp from "sharp";
 import type { ProcessedPhoto } from "./types";
 
 const MAX_EDGE = 1024; // lange Kante -> begrenzt zugleich die Vision-Tokens
 const NEUTRAL_BG = "#f4f1ea"; // ruhiger, neutraler Hintergrund für Freisteller
+
+/**
+ * Modell-Dateien von @imgly/background-removal-node liegen in dessen dist/-Ordner; die Lib löst
+ * sie per Default relativ zum **Prozess-CWD** auf. Hier stattdessen den echten Paketpfad
+ * ermitteln (createRequire umgeht Webpack), damit der Freisteller unabhängig vom CWD läuft.
+ */
+function imglyPublicPath(): string | undefined {
+  try {
+    const req = createRequire(path.join(process.cwd(), "package.json"));
+    const entry = req.resolve("@imgly/background-removal-node"); // …/dist/index.cjs
+    return pathToFileURL(path.dirname(entry) + path.sep).href;
+  } catch {
+    return undefined; // Default der Lib greift (node_modules relativ zum CWD)
+  }
+}
 
 /**
  * Leichte Optimierung: EXIF-Ausrichtung, Downscale, Belichtung/Weißabgleich.
@@ -24,14 +42,19 @@ export async function optimizePhoto(input: Buffer): Promise<Buffer> {
  * meldet den Grund an die UI/Diagnose zurück (statt still null zu liefern).
  */
 export async function cutoutPhoto(input: Buffer): Promise<Buffer> {
-  // Lazy-Import: großes Modell wird nur geladen, wenn wirklich gebraucht.
-  const modName = "@imgly/background-removal-node";
-  const { removeBackground } = (await import(modName)) as {
-    removeBackground: (input: Buffer) => Promise<Blob>;
+  // Lazy-Import mit statischem Literal: Webpack kann den Import so der serverExternalPackages-
+  // Ausnahme zuordnen. Ein variabler `import(modName)` schlug im Produktions-Build zur Laufzeit
+  // mit „Cannot find module" fehl (im Dev-Server dagegen nicht).
+  const { removeBackground } = (await import("@imgly/background-removal-node")) as unknown as {
+    removeBackground: (
+      input: Buffer,
+      config?: { publicPath?: string; model?: "small" | "medium" },
+    ) => Promise<Blob>;
   };
   // Ausrichtung vorab normalisieren, damit der Freisteller nicht auf dem Kopf steht.
   const oriented = await sharp(input).rotate().png().toBuffer();
-  const blob = await removeBackground(oriented);
+  const model = process.env.FASTSELL_CUTOUT_MODEL === "small" ? "small" : "medium";
+  const blob = await removeBackground(oriented, { publicPath: imglyPublicPath(), model });
   const png = Buffer.from(await blob.arrayBuffer());
 
   return sharp(png)
@@ -79,9 +102,16 @@ export async function cutoutFromDataUrl(dataUrl: string): Promise<CutoutResult> 
     const buf = await cutoutPhoto(Buffer.from(base64, "base64"));
     return { cutout: toDataUrl(buf) };
   } catch (err) {
-    const message = (err as Error).message;
+    const message = (err as Error).message || String(err);
     console.warn("[images] Freisteller fehlgeschlagen:", message);
-    return { cutout: null, reason: message.split("\n")[0].slice(0, 160) };
+    // Erste NICHT-leere Zeile als Kurzgrund (mehrzeilige Fehler beginnen sonst mit "" in der UI).
+    const reason =
+      message
+        .split("\n")
+        .map((l) => l.trim())
+        .find(Boolean)
+        ?.slice(0, 160) || "Unbekannter Fehler";
+    return { cutout: null, reason };
   }
 }
 

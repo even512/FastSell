@@ -27,6 +27,11 @@ RUN npx playwright install --with-deps chromium
 COPY . .
 RUN npm run build
 
+# Smoke-Test durch den ECHTEN Produktions-Build: Server kurz starten und /api/cutout aufrufen.
+# Fängt Bundling-Fehler im Webpack-Output (z. B. „Cannot find module"), die der reine
+# Verzeichnis-Check oben nicht sieht – lieber Build-Abbruch als ein Image mit kaputtem Freisteller.
+RUN node scripts/smoke-build.mjs
+
 # Laufzeit
 ENV NODE_ENV=production
 ENV FASTSELL_POSTER_HEADLESS=true

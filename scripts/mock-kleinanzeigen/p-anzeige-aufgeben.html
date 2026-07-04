@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>Anzeige aufgeben (Mock)</title>
+  <style>
+    /* Kleinanzeigen versteckt Radio-Inputs hinter gestylten Labels (sr-only) – genau das
+       simulieren wir, damit der Label-Fallback von clickControl real getestet wird. */
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .menu { display: none; border: 1px solid #ccc; }
+    .menu.open { display: block; }
+    label.pill { display: inline-block; padding: 6px 12px; border: 1px solid #888; cursor: pointer; }
+    input:checked + label.pill { background: #cfe9d9; }
+  </style>
+</head>
+<body>
+  <h1>Anzeige aufgeben</h1>
+  <form id="f">
+    <label for="ad-title">Titel</label>
+    <input id="ad-title" name="title">
+
+    <label for="ad-description">Beschreibung</label>
+    <textarea id="ad-description" name="description"></textarea>
+
+    <label for="ad-price-amount">Preis</label>
+    <input id="ad-price-amount" name="price">
+
+    <!-- Preisart: Custom-Dropdown wie auf kleinanzeigen.de -->
+    <button type="button" id="ad-price-type" aria-haspopup="menu">Bitte wählen</button>
+    <div id="pt-menu" class="menu" role="menu">
+      <button type="button" id="ad-price-type-menu-option-0">Festpreis</button>
+      <button type="button" id="ad-price-type-menu-option-1">VB</button>
+      <button type="button" id="ad-price-type-menu-option-2">Zu verschenken</button>
+    </div>
+
+    <!-- Versand: Ja/Nein-Radios, Inputs versteckt (sr-only), nur Labels sichtbar -->
+    <fieldset id="ad-shipping-enabled">
+      <legend>Versand möglich?</legend>
+      <input class="sr-only" type="radio" id="ad-shipping-enabled-yes" name="shippingEnabled" value="yes" checked>
+      <label class="pill" for="ad-shipping-enabled-yes">Ja</label>
+      <input class="sr-only" type="radio" id="ad-shipping-enabled-no" name="shippingEnabled" value="no">
+      <label class="pill" for="ad-shipping-enabled-no">Nein</label>
+    </fieldset>
+
+    <label for="ad-photos">Fotos</label>
+    <input type="file" id="ad-photos" multiple>
+
+    <button type="button" id="submit-btn">Anzeige aufgeben</button>
+  </form>
+
+  <script>
+    const state = { priceType: "", shipping: "yes" };
+    const trigger = document.getElementById("ad-price-type");
+    const menu = document.getElementById("pt-menu");
+    trigger.addEventListener("click", () => menu.classList.toggle("open"));
+    const labels = ["FIXED", "NEGOTIABLE", "GIVE_AWAY"];
+    for (let i = 0; i < 3; i++) {
+      document.getElementById("ad-price-type-menu-option-" + i).addEventListener("click", (e) => {
+        state.priceType = labels[i];
+        trigger.textContent = e.target.textContent;
+        menu.classList.remove("open");
+      });
+    }
+    document.querySelectorAll('input[name="shippingEnabled"]').forEach((r) =>
+      r.addEventListener("change", () => (state.shipping = r.value)),
+    );
+    document.getElementById("submit-btn").addEventListener("click", () => {
+      const q = new URLSearchParams({
+        adId: "4242",
+        priceType: state.priceType || "NONE",
+        shipping: document.getElementById("ad-shipping-enabled-no").checked ? "PICKUP" : "SHIPPING",
+      });
+      location.href = "p-anzeige-aufgeben-bestaetigung.html?" + q.toString();
+    });
+  </script>
+</body>
+</html>
