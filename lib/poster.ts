@@ -553,6 +553,56 @@ async function clickControl(page: Page, selector: string): Promise<boolean> {
 }
 
 /**
+ * Schließt einen offenen modalen Dialog **auswahlerhaltend**: zuerst Bestätigen-Button im Dialog,
+ * sonst Escape, sonst Schließen-X. Kleinanzeigen legt unter Dialoge (z. B. „Zustand") ein
+ * Backdrop-Overlay ([data-testid="modal-backdrop"]), das sonst ALLE weiteren Klicks abfängt –
+ * Preisart und „Anzeige aufgeben" liefen dadurch in Timeouts.
+ * Rückgabe: true wenn danach kein blockierender Dialog mehr offen ist.
+ */
+async function dismissBlockingModal(page: Page): Promise<boolean> {
+  const blocked = async () =>
+    (await page
+      .locator('[data-testid="modal-backdrop"]:visible, dialog[open], [aria-modal="true"]:visible')
+      .count()
+      .catch(() => 0)) > 0;
+  if (!(await blocked())) return true;
+
+  // 1) Bestätigen-Klick übernimmt eine bereits getroffene Auswahl (z. B. den Zustand).
+  const confirmRe = /bestätigen|übernehmen|fertig|^ok$/i;
+  const scoped = page
+    .locator('dialog[open], [role="dialog"], [aria-modal="true"]')
+    .getByRole("button", { name: confirmRe })
+    .first();
+  const confirm =
+    (await scoped.count().catch(() => 0)) > 0
+      ? scoped
+      : page.getByRole("button", { name: confirmRe }).first();
+  if ((await confirm.count().catch(() => 0)) > 0) {
+    await confirm.click({ timeout: 2000 }).catch(() => {});
+    await randomDelay(300, 700);
+    if (!(await blocked())) return true;
+  }
+
+  // 2) Escape
+  await page.keyboard.press("Escape").catch(() => {});
+  await randomDelay(300, 700);
+  if (!(await blocked())) return true;
+
+  // 3) Schließen-X
+  const close = page
+    .locator(
+      'dialog[open] [aria-label*="schließen" i], [role="dialog"] [aria-label*="schließen" i], ' +
+        'dialog[open] [aria-label*="close" i], [role="dialog"] [aria-label*="close" i]',
+    )
+    .first();
+  if ((await close.count().catch(() => 0)) > 0) {
+    await close.click({ timeout: 2000 }).catch(() => {});
+    await randomDelay(300, 700);
+  }
+  return !(await blocked());
+}
+
+/**
  * Setzt eine Checkbox/einen Switch (per sichtbarem Namen) auf checked und liest den Zustand zurück.
  * Rückgabe: true/false = tatsächlicher Zustand danach, null = Control nicht gefunden.
  */
@@ -577,7 +627,13 @@ async function setToggle(page: Page, nameRe: RegExp, checked: boolean): Promise<
  * folgenden Button (aktuelles Formular); die Option dann per Text oder Radio-Rolle. Best effort.
  */
 async function selectCondition(page: Page, condition: string): Promise<boolean> {
-  if (await selectFromDropdown(page, /zustand/i, condition)) return true;
+  // WICHTIG: Der Zustand öffnet auf Kleinanzeigen einen modalen Dialog. Nach der Auswahl MUSS
+  // „Bestätigen" geklickt werden – sonst bleibt das Backdrop offen und fängt alle weiteren
+  // Klicks ab (Preisart, „Anzeige aufgeben"). dismissBlockingModal übernimmt genau das.
+  if (await selectFromDropdown(page, /zustand/i, condition)) {
+    await dismissBlockingModal(page);
+    return true;
+  }
 
   const label = page.locator('label[for*="condition" i]').first();
   if ((await label.count().catch(() => 0)) === 0) return false;
@@ -588,17 +644,15 @@ async function selectCondition(page: Page, condition: string): Promise<boolean> 
     return false;
   }
   await randomDelay(250, 600);
-  if (await clickExactText(page, condition)) return true;
+  if (await clickExactText(page, condition)) {
+    await dismissBlockingModal(page);
+    return true;
+  }
   const radio = page.getByRole("radio", { name: new RegExp(condition, "i") }).first();
   if ((await radio.count().catch(() => 0)) > 0) {
     await radio.check({ timeout: FIELD_TIMEOUT }).catch(() => {});
     if (await radio.isChecked().catch(() => false)) {
-      // Auswahl-Dialoge haben oft einen Bestätigen-Button.
-      await page
-        .getByRole("button", { name: /übernehmen|bestätigen|fertig|ok/i })
-        .first()
-        .click({ timeout: 2000 })
-        .catch(() => {});
+      await dismissBlockingModal(page);
       return true;
     }
   }
@@ -635,6 +689,9 @@ async function setPriceType(
       message: `⚠ Preisart konnte nicht auf ${label} gesetzt werden – bitte in der Anzeige prüfen.`,
     });
 
+  // Ein evtl. noch offener Dialog (z. B. Zustand) würde alle folgenden Klicks abfangen.
+  await dismissBlockingModal(page);
+
   // 1) Aktuelles Formular: #ad-price-type. Meist ein Dropdown-Button mit Menü-Optionen; falls es
   //    doch ein natives <select> ist, direkt darüber wählen.
   const trigger = page.locator("#ad-price-type").first();
@@ -646,15 +703,21 @@ async function setPriceType(
         .catch(() => trigger.selectOption({ label }))
         .catch(() => null);
       if (picked) return done();
-    } else {
-      try {
-        await trigger.click({ timeout: FIELD_TIMEOUT });
-        await randomDelay(250, 600);
-        const option = page.locator(`#ad-price-type-menu-option-${menuIdx}`).first();
-        await option.waitFor({ state: "visible", timeout: FIELD_TIMEOUT });
-        await option.click({ timeout: FIELD_TIMEOUT });
-        return done();
-      } catch {
+    } else if (await clickControl(page, "#ad-price-type")) {
+      await randomDelay(250, 600);
+      const optSel = `#ad-price-type-menu-option-${menuIdx}`;
+      const optVisible = await page
+        .locator(optSel)
+        .first()
+        .waitFor({ state: "visible", timeout: FIELD_TIMEOUT })
+        .then(() => true)
+        .catch(() => false);
+      if (optVisible && (await clickControl(page, optSel))) {
+        await randomDelay(200, 500);
+        // Verifizieren statt behaupten: der Trigger zeigt danach die gewählte Preisart an.
+        const text = ((await trigger.textContent().catch(() => "")) || "").trim();
+        if (!text || text.toLowerCase().includes(label.toLowerCase())) return done();
+      } else {
         await page.keyboard.press("Escape").catch(() => {});
       }
     }
@@ -905,6 +968,8 @@ export async function publishListing(
 
     // Absenden – Button „Anzeige aufgeben" (früher #pstad-submit).
     onProgress({ step: "submit", status: "running", message: "Anzeige wird veröffentlicht …" });
+    // Sicherheitsnetz: ein noch offener Dialog (Backdrop) würde den Submit-Klick abfangen.
+    await dismissBlockingModal(page);
     const submitBtn = page
       .getByRole("button", { name: "Anzeige aufgeben", exact: true })
       .or(page.locator("#pstad-submit"))
