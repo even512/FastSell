@@ -47,14 +47,17 @@ export async function cutoutPhoto(input: Buffer): Promise<Buffer> {
   // mit „Cannot find module" fehl (im Dev-Server dagegen nicht).
   const { removeBackground } = (await import("@imgly/background-removal-node")) as unknown as {
     removeBackground: (
-      input: Buffer,
+      input: Blob,
       config?: { publicPath?: string; model?: "small" | "medium" },
     ) => Promise<Blob>;
   };
   // Ausrichtung vorab normalisieren, damit der Freisteller nicht auf dem Kopf steht.
   const oriented = await sharp(input).rotate().png().toBuffer();
   const model = process.env.FASTSELL_CUTOUT_MODEL === "small" ? "small" : "medium";
-  const blob = await removeBackground(oriented, { publicPath: imglyPublicPath(), model });
+  // WICHTIG: als Blob MIT MIME-Type übergeben. Bei einem rohen Buffer erzeugt die Lib intern ein
+  // Blob ohne Type und wirft dann „Unsupported format:" – der Freisteller schlug so immer fehl.
+  const inputBlob = new Blob([new Uint8Array(oriented)], { type: "image/png" });
+  const blob = await removeBackground(inputBlob, { publicPath: imglyPublicPath(), model });
   const png = Buffer.from(await blob.arrayBuffer());
 
   return sharp(png)
