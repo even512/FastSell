@@ -1020,8 +1020,9 @@ export async function publishListing(
       await reportFailure(
         "verify",
         "Das Absenden wurde ausgelöst, aber die Veröffentlichung ließ sich nicht bestätigen (die " +
-          "Seite blieb im Formular). Es wurde vermutlich nichts eingestellt – Screenshot + Diagnose " +
-          "unten. Falls die Anzeige doch erscheint, sag Bescheid, dann justiere ich die Erfolgsprüfung.",
+          "Seite blieb im Formular). Es wurde vermutlich nichts eingestellt – Details siehe " +
+          "Screenshot + Diagnose unten. Falls die Anzeige trotzdem online ist, muss die " +
+          "Erfolgsprüfung in lib/poster.ts an die aktuelle Seite angepasst werden.",
       );
       return;
     }
