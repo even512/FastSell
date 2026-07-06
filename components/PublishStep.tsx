@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PublishProgress, PublishRequest } from "@/lib/types";
 
 export function PublishStep({
@@ -13,10 +13,19 @@ export function PublishStep({
   onBack: () => void;
 }) {
   const [events, setEvents] = useState<PublishProgress[]>([]);
-  const [state, setState] = useState<"idle" | "running" | "done" | "error" | "action_required">(
-    "idle",
-  );
+  const [state, setState] = useState<"running" | "done" | "error" | "action_required">("running");
   const [finalUrl, setFinalUrl] = useState<string | undefined>();
+  const autoStarted = useRef(false);
+
+  // Direkt lospublishen, sobald der Schritt erscheint – die Bestätigung war schon der
+  // „Anzeige einstellen"-Button im Preis-Schritt. useRef-Guard: React StrictMode (Dev) führt
+  // Effekte doppelt aus, ohne Guard würde die Anzeige doppelt gepostet.
+  useEffect(() => {
+    if (autoStarted.current) return;
+    autoStarted.current = true;
+    void publish();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function publish() {
     setEvents([]);
@@ -69,44 +78,24 @@ export function PublishStep({
     <div className="space-y-5">
       <h2 className="text-lg font-bold">Anzeige einstellen</h2>
 
-      {state === "idle" && (
-        <div className="space-y-4">
-          <p className="text-sm text-gray-500">
-            Die Anzeige wird per Browser-Automation auf Kleinanzeigen veröffentlicht. Voraussetzung:
-            einmaliger Login (Login-Schritt in der Anleitung). Bei einer Sicherheitsabfrage öffnet
-            sich der Browser zum Lösen.
-          </p>
-          <div className="flex gap-3">
-            <button onClick={onBack} className="rounded-xl border px-5 py-3 font-medium text-gray-600">
-              Zurück
-            </button>
-            <button onClick={publish} className="flex-1 rounded-xl bg-brand py-3 font-semibold text-white">
-              Jetzt einstellen
-            </button>
-          </div>
-        </div>
-      )}
-
-      {state !== "idle" && (
-        <ol className="space-y-2">
-          {events.map((e, i) => (
-            <li key={i} className="flex items-start gap-2 text-sm">
-              <span className="mt-0.5">
-                {e.status === "done"
-                  ? "✅"
-                  : e.status === "error"
-                    ? "❌"
-                    : e.status === "action_required"
-                      ? "⏸️"
-                      : "⏳"}
-              </span>
-              <span className={e.status === "error" ? "text-red-700" : "text-gray-700"}>
-                {e.message}
-              </span>
-            </li>
-          ))}
-        </ol>
-      )}
+      <ol className="space-y-2">
+        {events.map((e, i) => (
+          <li key={i} className="flex items-start gap-2 text-sm">
+            <span className="mt-0.5">
+              {e.status === "done"
+                ? "✅"
+                : e.status === "error"
+                  ? "❌"
+                  : e.status === "action_required"
+                    ? "⏸️"
+                    : "⏳"}
+            </span>
+            <span className={e.status === "error" ? "text-red-700" : "text-gray-700"}>
+              {e.message}
+            </span>
+          </li>
+        ))}
+      </ol>
 
       {(() => {
         const shot = [...events].reverse().find((e) => e.screenshot)?.screenshot;

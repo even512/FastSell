@@ -14,6 +14,12 @@
     .hidden { display: none; }
     .cols { display: flex; gap: 24px; }
     .cols a { display: block; padding: 4px 0; }
+    /* Zustand-Dialog wie auf der echten Seite: Backdrop-Overlay fängt alle Klicks dahinter ab. */
+    #modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 40; }
+    #condition-dialog { display: none; position: fixed; z-index: 50; top: 15%; left: 50%;
+      transform: translateX(-50%); background: #fff; border: 1px solid #888; padding: 16px; }
+    .modal-open #modal-backdrop, .modal-open #condition-dialog { display: block; }
+    #condition-dialog label { display: block; padding: 6px; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -53,6 +59,10 @@
       <label for="ad-title">Titel</label>
       <input id="ad-title" name="title">
 
+      <!-- Zustand: öffnet einen MODALEN Dialog (wie auf kleinanzeigen.de). Bleibt er offen,
+           blockiert das Backdrop alle weiteren Klicks – genau der reale Fehlerfall. -->
+      <button type="button" id="ad-condition-trigger">Zustand: Bitte wählen</button>
+
       <label for="ad-description">Beschreibung</label>
       <textarea id="ad-description" name="description"></textarea>
 
@@ -83,7 +93,23 @@
     </form>
   </template>
 
+  <!-- Zustand-Dialog + Backdrop (Markup wie KA: data-testid="modal-backdrop"). Statisch im
+       Body (display:none) – stört die Kategoriephase nicht, gehört aber zum Formular. -->
+  <div id="modal-backdrop" data-testid="modal-backdrop" aria-hidden="true"></div>
+  <div id="condition-dialog" role="dialog" aria-modal="true">
+    <h2>Zustand</h2>
+    <label><input type="radio" name="cond" value="Neu"> Neu</label>
+    <label><input type="radio" name="cond" value="Sehr Gut"> Sehr Gut</label>
+    <label><input type="radio" name="cond" value="Gut"> Gut</label>
+    <label><input type="radio" name="cond" value="In Ordnung"> In Ordnung</label>
+    <label><input type="radio" name="cond" value="Defekt"> Defekt</label>
+    <button type="button" id="condition-cancel">Abbrechen</button>
+    <button type="button" id="condition-confirm">Bestätigen</button>
+  </div>
+
   <script>
+    const state = { priceType: "", condition: "" };
+
     // --- Kategorie-Baum: Klick auf Parent zeigt die nächste Spalte, Blatt-Klick rendert
     //     „Weiter" verzögert (wie die echte SPA nach der Hash-Navigation).
     document.getElementById("cat_161").addEventListener("click", () =>
@@ -106,6 +132,30 @@
       });
     }
 
+    // --- Zustand-Dialog: Auswahl zählt NUR nach „Bestätigen" (wie auf der echten Seite).
+    //     Dialog + Backdrop sind statisch; der Trigger-Button kommt erst mit dem Formular
+    //     und wird in initForm() verdrahtet. ---
+    const openDialog = () => document.body.classList.add("modal-open");
+    const closeDialog = () => document.body.classList.remove("modal-open");
+    document.getElementById("condition-confirm").addEventListener("click", () => {
+      const sel = document.querySelector('input[name="cond"]:checked');
+      state.condition = sel ? sel.value : "";
+      document.getElementById("ad-condition-trigger").textContent =
+        "Zustand: " + (state.condition || "Bitte wählen");
+      closeDialog();
+    });
+    // Abbrechen/Escape verwerfen die Auswahl – so fällt im Test auf, wenn statt „Bestätigen"
+    // nur Escape gedrückt wurde.
+    const discard = () => {
+      const sel = document.querySelector('input[name="cond"]:checked');
+      if (sel) sel.checked = false;
+      closeDialog();
+    };
+    document.getElementById("condition-cancel").addEventListener("click", discard);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && document.body.classList.contains("modal-open")) discard();
+    });
+
     // „Weiter" tauscht Kategorie-Ansicht gegen das Formular (Schritt 2) und verdrahtet es.
     function showForm() {
       document.getElementById("cat-view").remove();
@@ -114,7 +164,10 @@
     }
 
     function initForm() {
-      const state = { priceType: "", shipping: "yes" };
+      // --- Zustand-Trigger (öffnet den modalen Dialog) ---
+      document.getElementById("ad-condition-trigger").addEventListener("click", openDialog);
+
+      // --- Preisart-Dropdown ---
       const trigger = document.getElementById("ad-price-type");
       const menu = document.getElementById("pt-menu");
       trigger.addEventListener("click", () => menu.classList.toggle("open"));
@@ -126,14 +179,14 @@
           menu.classList.remove("open");
         });
       }
-      document.querySelectorAll('input[name="shippingEnabled"]').forEach((r) =>
-        r.addEventListener("change", () => (state.shipping = r.value)),
-      );
+
+      // --- Submit -> Bestätigungs-URL mit den tatsächlich gesetzten Werten ---
       document.getElementById("submit-btn").addEventListener("click", () => {
         const q = new URLSearchParams({
           adId: "4242",
           priceType: state.priceType || "NONE",
           shipping: document.getElementById("ad-shipping-enabled-no").checked ? "PICKUP" : "SHIPPING",
+          condition: state.condition || "NONE",
         });
         location.href = "p-anzeige-aufgeben-bestaetigung.html?" + q.toString();
       });
