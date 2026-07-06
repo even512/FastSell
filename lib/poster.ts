@@ -428,7 +428,13 @@ export async function selectCategory(
 
     onProgress({ step: "category", status: "running", message: `Kategorie: „${picked.text}" …` });
     if (picked.path) currentPath = picked.path;
-    if (!picked.isParent) return; // Blatt erreicht → Kategorie vollständig
+    if (!picked.isParent) {
+      // Blatt erreicht → Kategorie vollständig. Auch hier settlen lassen: die SPA rendert nach
+      // der Blatt-Wahl neu und zeigt den „Weiter"-Button erst verzögert (sonst Race in advanceToForm).
+      await page.waitForLoadState("domcontentloaded").catch(() => {});
+      await randomDelay(500, 1200);
+      return;
+    }
     await page.waitForLoadState("domcontentloaded").catch(() => {});
     await randomDelay(500, 1200);
   }
@@ -490,12 +496,23 @@ async function selectCategoryByPath(
 /**
  * Nach gewählter Kategorie führt Kleinanzeigen über einen „Weiter"-Button zum eigentlichen
  * Formular (Schritt 2). Klickt „Weiter", bis das Titel-Feld erscheint (max. wenige Zwischenschritte).
+ * Wartet pro Runde aktiv auf Formular ODER „Weiter" – die SPA rendert den Button nach der
+ * Blatt-Wahl verzögert; ein instantaner count() verpasst ihn (dann bricht der Post fälschlich
+ * mit „Titel-Feld nicht gefunden" ab, obwohl „Weiter" sichtbar ist).
  */
 async function advanceToForm(page: Page, onProgress: (p: PublishProgress) => void): Promise<void> {
+  const form = page.locator(TITLE_SEL).first();
+  const weiter = page
+    .getByRole("button", { name: /^weiter/i })
+    .or(page.locator('button[type="submit"]:has-text("Weiter")'))
+    .first();
   for (let i = 0; i < 3; i++) {
-    if ((await page.locator(TITLE_SEL).count().catch(() => 0)) > 0) return; // Formular da
-    const weiter = page.getByRole("button", { name: /^weiter/i }).first();
-    if ((await weiter.count().catch(() => 0)) === 0) return; // kein „Weiter" → Aufrufer meldet ehrlich
+    try {
+      await form.or(weiter).first().waitFor({ state: "visible", timeout: FIELD_TIMEOUT });
+    } catch {
+      return; // weder Formular noch „Weiter" → Aufrufer meldet ehrlich inkl. Diagnose
+    }
+    if ((await form.count().catch(() => 0)) > 0) return; // Formular da
     onProgress({ step: "category", status: "running", message: "Weiter zum Formular …" });
     await weiter.click({ timeout: FIELD_TIMEOUT }).catch(() => {});
     await page.waitForLoadState("domcontentloaded").catch(() => {});

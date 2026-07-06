@@ -11,67 +11,133 @@
     .menu.open { display: block; }
     label.pill { display: inline-block; padding: 6px 12px; border: 1px solid #888; cursor: pointer; }
     input:checked + label.pill { background: #cfe9d9; }
+    .hidden { display: none; }
+    .cols { display: flex; gap: 24px; }
+    .cols a { display: block; padding: 4px 0; }
   </style>
 </head>
 <body>
   <h1>Anzeige aufgeben</h1>
-  <form id="f">
-    <label for="ad-title">Titel</label>
-    <input id="ad-title" name="title">
 
-    <label for="ad-description">Beschreibung</label>
-    <textarea id="ad-description" name="description"></textarea>
-
-    <label for="ad-price-amount">Preis</label>
-    <input id="ad-price-amount" name="price">
-
-    <!-- Preisart: Custom-Dropdown wie auf kleinanzeigen.de -->
-    <button type="button" id="ad-price-type" aria-haspopup="menu">Bitte wählen</button>
-    <div id="pt-menu" class="menu" role="menu">
-      <button type="button" id="ad-price-type-menu-option-0">Festpreis</button>
-      <button type="button" id="ad-price-type-menu-option-1">VB</button>
-      <button type="button" id="ad-price-type-menu-option-2">Zu verschenken</button>
+  <!-- Kategorie-Auswahl wie auf kleinanzeigen.de: mehrspaltiger Baum aus <a>-Links mit
+       #?path=…&isParent=…-Hashes. Das eigentliche Formular existiert zu diesem Zeitpunkt
+       NICHT im DOM (nur als <template>), wie beim Original – erst „Weiter" bringt es. -->
+  <div id="cat-view">
+    <h2>Kategorie auswählen</h2>
+    <div class="cols">
+      <div id="cat-col-1">
+        <a id="cat_210" href="#?path=210&isParent=true">Auto, Rad &amp; Boot</a>
+        <a id="cat_161" href="#?path=161&isParent=true">Elektronik</a>
+        <a id="cat_80" href="#?path=80&isParent=true">Haus &amp; Garten</a>
+      </div>
+      <div id="cat-col-2" class="hidden">
+        <a id="cat_279" href="#?path=161/279&isParent=true">Konsolen</a>
+        <a id="cat_225" href="#?path=161/225&isParent=true">PC-Zubehör &amp; Software</a>
+        <a id="cat_175" href="#?path=161/175&isParent=true">TV &amp; Video</a>
+      </div>
+      <div id="cat-col-3" class="hidden">
+        <a id="cat_grafikkarten" href="#?path=161/225/grafikkarten&isParent=undefined">Grafikkarten</a>
+        <a id="cat_netzwerk_modem" href="#?path=161/225/netzwerk_modem&isParent=undefined">Netzwerk &amp; Modem</a>
+        <a id="cat_monitore" href="#?path=161/225/monitore&isParent=undefined">Monitore</a>
+      </div>
     </div>
+    <!-- „Weiter" erscheint erst NACH der Blatt-Wahl und dann verzögert (SPA-Neurenderung).
+         Die 1500 ms liegen bewusst über den Post-Klick-Delays des Posters (max. 1200 ms):
+         ein instantaner count() auf den Button verpasst ihn garantiert – genau die
+         Race-Condition aus dem Bug-Report („Titel-Feld nicht gefunden"). -->
+    <div id="weiter-slot"></div>
+  </div>
 
-    <!-- Versand: Ja/Nein-Radios, Inputs versteckt (sr-only), nur Labels sichtbar -->
-    <fieldset id="ad-shipping-enabled">
-      <legend>Versand möglich?</legend>
-      <input class="sr-only" type="radio" id="ad-shipping-enabled-yes" name="shippingEnabled" value="yes" checked>
-      <label class="pill" for="ad-shipping-enabled-yes">Ja</label>
-      <input class="sr-only" type="radio" id="ad-shipping-enabled-no" name="shippingEnabled" value="no">
-      <label class="pill" for="ad-shipping-enabled-no">Nein</label>
-    </fieldset>
+  <template id="form-tpl">
+    <form id="f">
+      <label for="ad-title">Titel</label>
+      <input id="ad-title" name="title">
 
-    <label for="ad-photos">Fotos</label>
-    <input type="file" id="ad-photos" multiple>
+      <label for="ad-description">Beschreibung</label>
+      <textarea id="ad-description" name="description"></textarea>
 
-    <button type="button" id="submit-btn">Anzeige aufgeben</button>
-  </form>
+      <label for="ad-price-amount">Preis</label>
+      <input id="ad-price-amount" name="price">
+
+      <!-- Preisart: Custom-Dropdown wie auf kleinanzeigen.de -->
+      <button type="button" id="ad-price-type" aria-haspopup="menu">Bitte wählen</button>
+      <div id="pt-menu" class="menu" role="menu">
+        <button type="button" id="ad-price-type-menu-option-0">Festpreis</button>
+        <button type="button" id="ad-price-type-menu-option-1">VB</button>
+        <button type="button" id="ad-price-type-menu-option-2">Zu verschenken</button>
+      </div>
+
+      <!-- Versand: Ja/Nein-Radios, Inputs versteckt (sr-only), nur Labels sichtbar -->
+      <fieldset id="ad-shipping-enabled">
+        <legend>Versand möglich?</legend>
+        <input class="sr-only" type="radio" id="ad-shipping-enabled-yes" name="shippingEnabled" value="yes" checked>
+        <label class="pill" for="ad-shipping-enabled-yes">Ja</label>
+        <input class="sr-only" type="radio" id="ad-shipping-enabled-no" name="shippingEnabled" value="no">
+        <label class="pill" for="ad-shipping-enabled-no">Nein</label>
+      </fieldset>
+
+      <label for="ad-photos">Fotos</label>
+      <input type="file" id="ad-photos" multiple>
+
+      <button type="button" id="submit-btn">Anzeige aufgeben</button>
+    </form>
+  </template>
 
   <script>
-    const state = { priceType: "", shipping: "yes" };
-    const trigger = document.getElementById("ad-price-type");
-    const menu = document.getElementById("pt-menu");
-    trigger.addEventListener("click", () => menu.classList.toggle("open"));
-    const labels = ["FIXED", "NEGOTIABLE", "GIVE_AWAY"];
-    for (let i = 0; i < 3; i++) {
-      document.getElementById("ad-price-type-menu-option-" + i).addEventListener("click", (e) => {
-        state.priceType = labels[i];
-        trigger.textContent = e.target.textContent;
-        menu.classList.remove("open");
+    // --- Kategorie-Baum: Klick auf Parent zeigt die nächste Spalte, Blatt-Klick rendert
+    //     „Weiter" verzögert (wie die echte SPA nach der Hash-Navigation).
+    document.getElementById("cat_161").addEventListener("click", () =>
+      document.getElementById("cat-col-2").classList.remove("hidden"),
+    );
+    document.getElementById("cat_225").addEventListener("click", () =>
+      document.getElementById("cat-col-3").classList.remove("hidden"),
+    );
+    for (const leaf of document.querySelectorAll("#cat-col-3 a")) {
+      leaf.addEventListener("click", () => {
+        setTimeout(() => {
+          const slot = document.getElementById("weiter-slot");
+          if (slot.querySelector("button")) return;
+          const btn = document.createElement("button");
+          btn.type = "submit";
+          btn.textContent = "Weiter";
+          btn.addEventListener("click", showForm);
+          slot.appendChild(btn);
+        }, 1500);
       });
     }
-    document.querySelectorAll('input[name="shippingEnabled"]').forEach((r) =>
-      r.addEventListener("change", () => (state.shipping = r.value)),
-    );
-    document.getElementById("submit-btn").addEventListener("click", () => {
-      const q = new URLSearchParams({
-        adId: "4242",
-        priceType: state.priceType || "NONE",
-        shipping: document.getElementById("ad-shipping-enabled-no").checked ? "PICKUP" : "SHIPPING",
+
+    // „Weiter" tauscht Kategorie-Ansicht gegen das Formular (Schritt 2) und verdrahtet es.
+    function showForm() {
+      document.getElementById("cat-view").remove();
+      document.body.appendChild(document.getElementById("form-tpl").content.cloneNode(true));
+      initForm();
+    }
+
+    function initForm() {
+      const state = { priceType: "", shipping: "yes" };
+      const trigger = document.getElementById("ad-price-type");
+      const menu = document.getElementById("pt-menu");
+      trigger.addEventListener("click", () => menu.classList.toggle("open"));
+      const labels = ["FIXED", "NEGOTIABLE", "GIVE_AWAY"];
+      for (let i = 0; i < 3; i++) {
+        document.getElementById("ad-price-type-menu-option-" + i).addEventListener("click", (e) => {
+          state.priceType = labels[i];
+          trigger.textContent = e.target.textContent;
+          menu.classList.remove("open");
+        });
+      }
+      document.querySelectorAll('input[name="shippingEnabled"]').forEach((r) =>
+        r.addEventListener("change", () => (state.shipping = r.value)),
+      );
+      document.getElementById("submit-btn").addEventListener("click", () => {
+        const q = new URLSearchParams({
+          adId: "4242",
+          priceType: state.priceType || "NONE",
+          shipping: document.getElementById("ad-shipping-enabled-no").checked ? "PICKUP" : "SHIPPING",
+        });
+        location.href = "p-anzeige-aufgeben-bestaetigung.html?" + q.toString();
       });
-      location.href = "p-anzeige-aufgeben-bestaetigung.html?" + q.toString();
-    });
+    }
   </script>
 </body>
 </html>
