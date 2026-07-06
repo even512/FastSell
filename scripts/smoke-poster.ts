@@ -50,7 +50,9 @@ async function runCase(
 ) {
   const req: PublishRequest = {
     title: `Testartikel ${priceType}`,
-    category: "", // leer -> Kategorie-Auswahl wird übersprungen (Mock zeigt sofort das Formular)
+    // Der Mock startet wie das Original mit der Kategorie-Auswahl; ohne API-Key läuft die
+    // deterministische Pfad-Heuristik diesen Pfad durch den Mock-Baum.
+    category: "Elektronik > PC-Zubehör & Software > Netzwerk & Modem",
     // Öffnet im Mock den MODALEN Zustand-Dialog (wie auf der echten Seite). Der Test stellt
     // sicher, dass er per „Bestätigen" geschlossen wird – sonst blockiert sein Backdrop
     // Preisart und Submit (realer Fehlerfall vom ersten Live-Lauf).
@@ -66,6 +68,11 @@ async function runCase(
     events.push(p);
     console.log(`  [${p.step}/${p.status}] ${p.message}${p.url ? ` -> ${p.url}` : ""}`);
   });
+
+  // Der Übergang Kategorie -> Formular muss über den (verzögert erscheinenden) „Weiter"-Button
+  // gelaufen sein – Regressionstest für den Bug „Titel-Feld nicht gefunden".
+  if (!events.some((e) => e.step === "category" && /weiter zum formular/i.test(e.message)))
+    throw new Error(`${priceType}: kein „Weiter zum Formular"-Schritt im Event-Log`);
 
   const done = events.find((e) => e.status === "done");
   if (!done?.url) throw new Error(`${priceType}: kein done-Event mit URL`);
@@ -97,6 +104,8 @@ async function main() {
   process.chdir(fs.mkdtempSync(path.join(os.tmpdir(), "fastsell-poster-smoke-")));
   process.env.FASTSELL_NEW_AD_URL = `${base}/p-anzeige-aufgeben.html`;
   process.env.FASTSELL_POSTER_HEADLESS = "true";
+  // Ohne API-Key wirft die KI-Kategorieauswahl -> deterministischer Pfad-Heuristik-Fallback.
+  delete process.env.ANTHROPIC_API_KEY;
 
   const { publishListing } = await import("../lib/poster");
   const { saveStorageState } = await import("../lib/session");
