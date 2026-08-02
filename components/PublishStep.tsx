@@ -1,7 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import type { PublishProgress, PublishRequest } from "@/lib/types";
+import type { Attribute, MissingField, PublishProgress, PublishRequest } from "@/lib/types";
+
+/** Merged zwei Attribut-Listen (per Label dedupliziert; `extra` gewinnt). */
+function mergeAttributes(base: Attribute[], extra: Attribute[]): Attribute[] {
+  const norm = (s: string) => s.toLowerCase().trim();
+  const map = new Map<string, Attribute>();
+  for (const a of base) map.set(norm(a.label), a);
+  for (const a of extra) map.set(norm(a.label), a);
+  return [...map.values()];
+}
 
 export function PublishStep({
   buildRequest,
@@ -17,16 +26,28 @@ export function PublishStep({
     "idle",
   );
   const [finalUrl, setFinalUrl] = useState<string | undefined>();
+  // Vom Nutzer nachgetragene Pflichtfeld-Werte – über mehrere Retry-Runden akkumuliert.
+  const [providedAttributes, setProvidedAttributes] = useState<Attribute[]>([]);
+  // Vom Backend gemeldete offene Pflichtfelder (bei action_required).
+  const [missingFields, setMissingFields] = useState<MissingField[]>([]);
+  // Eingaben zu den offenen Feldern (key -> Wert), mit Claude-Vorschlag vorbelegt.
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
 
-  async function publish() {
+  async function publish(extraAttributes: Attribute[] = providedAttributes) {
     setEvents([]);
     setState("running");
     setFinalUrl(undefined);
+    setMissingFields([]);
     try {
+      const base = buildRequest();
+      const body: PublishRequest = {
+        ...base,
+        attributes: mergeAttributes(base.attributes, extraAttributes),
+      };
       const res = await fetch("/api/publish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildRequest()),
+        body: JSON.stringify(body),
       });
       if (!res.body) throw new Error("Kein Antwort-Stream.");
 
@@ -56,13 +77,31 @@ export function PublishStep({
       }
 
       if (last?.status === "done") setState("done");
-      else if (last?.status === "action_required") setState("action_required");
-      else if (last?.status === "error") setState("error");
+      else if (last?.status === "action_required") {
+        setState("action_required");
+        if (last.missingFields?.length) {
+          setMissingFields(last.missingFields);
+          // Eingaben mit den Claude-Vorschlägen vorbelegen.
+          setFieldValues(
+            Object.fromEntries(last.missingFields.map((f) => [f.key, f.suggestion ?? ""])),
+          );
+        }
+      } else if (last?.status === "error") setState("error");
       else setState(last ? "done" : "error");
     } catch (e) {
       setEvents((prev) => [...prev, { step: "error", status: "error", message: (e as Error).message }]);
       setState("error");
     }
+  }
+
+  // Nachgetragene Werte übernehmen und die Anzeige erneut (mit diesen Werten) einstellen.
+  function retryWithFields() {
+    const newAttrs: Attribute[] = missingFields
+      .map((f) => ({ label: f.label, wert: (fieldValues[f.key] ?? "").trim() }))
+      .filter((a) => a.wert);
+    const merged = mergeAttributes(providedAttributes, newAttrs);
+    setProvidedAttributes(merged);
+    publish(merged);
   }
 
   return (
@@ -80,7 +119,7 @@ export function PublishStep({
             <button onClick={onBack} className="rounded-xl border px-5 py-3 font-medium text-gray-600">
               Zurück
             </button>
-            <button onClick={publish} className="flex-1 rounded-xl bg-brand py-3 font-semibold text-white">
+            <button onClick={() => publish()} className="flex-1 rounded-xl bg-brand py-3 font-semibold text-white">
               Jetzt einstellen
             </button>
           </div>
@@ -152,13 +191,66 @@ export function PublishStep({
         </div>
       )}
 
-      {state === "action_required" && (
+      {/* Neue/unbekannte Pflichtfelder, die Kleinanzeigen für diese Kategorie verlangt. */}
+      {state === "action_required" && missingFields.length > 0 && (
+        <div className="space-y-4 rounded-xl bg-amber-50 p-4">
+          <p className="text-sm text-amber-900">
+            Kleinanzeigen verlangt für diese Kategorie {missingFields.length > 1 ? "noch Angaben" : "noch eine Angabe"}.
+            Bitte {missingFields.length > 1 ? "die Werte" : "den Wert"} bestätigen oder anpassen – danach
+            stelle ich die Anzeige automatisch fertig ein.
+          </p>
+          <div className="space-y-3">
+            {missingFields.map((f) => (
+              <div key={f.key} className="space-y-1">
+                <label className="block text-sm font-semibold text-gray-700">{f.label}</label>
+                {f.options && f.options.length > 0 ? (
+                  <select
+                    value={fieldValues[f.key] ?? ""}
+                    onChange={(e) =>
+                      setFieldValues((v) => ({ ...v, [f.key]: e.target.value }))
+                    }
+                    className="w-full rounded-lg border bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">Bitte wählen …</option>
+                    {f.options.map((o) => (
+                      <option key={o} value={o}>
+                        {o}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    value={fieldValues[f.key] ?? ""}
+                    onChange={(e) =>
+                      setFieldValues((v) => ({ ...v, [f.key]: e.target.value }))
+                    }
+                    placeholder="Wert eingeben"
+                    className="w-full rounded-lg border px-3 py-2 text-sm"
+                  />
+                )}
+                {f.suggestion && (
+                  <p className="text-xs text-amber-700">Vorschlag von Claude: {f.suggestion}</p>
+                )}
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={retryWithFields}
+            className="w-full rounded-xl bg-brand py-3 font-semibold text-white"
+          >
+            Mit diesen Angaben erneut einstellen
+          </button>
+        </div>
+      )}
+
+      {/* Login-/Captcha-Fall: keine Feldabfrage, sondern Aktion im geöffneten Browser. */}
+      {state === "action_required" && missingFields.length === 0 && (
         <div className="space-y-3 rounded-xl bg-amber-50 p-4">
           <p className="text-sm text-amber-800">
             Es ist eine Aktion nötig (Login oder Sicherheitsabfrage). Bitte im geöffneten Browser
             abschließen und danach erneut versuchen.
           </p>
-          <button onClick={publish} className="w-full rounded-xl bg-brand py-3 font-semibold text-white">
+          <button onClick={() => publish()} className="w-full rounded-xl bg-brand py-3 font-semibold text-white">
             Erneut versuchen
           </button>
         </div>
@@ -166,7 +258,7 @@ export function PublishStep({
 
       {state === "error" && (
         <div className="space-y-3">
-          <button onClick={publish} className="w-full rounded-xl bg-brand py-3 font-semibold text-white">
+          <button onClick={() => publish()} className="w-full rounded-xl bg-brand py-3 font-semibold text-white">
             Erneut versuchen
           </button>
           <button onClick={onBack} className="w-full rounded-xl border py-3 font-medium text-gray-600">

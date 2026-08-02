@@ -67,3 +67,62 @@ export async function chooseCategoryOption(
   if (typeof idx !== "number" || !Number.isInteger(idx)) return -1;
   return idx >= 0 && idx < options.length ? idx : -1;
 }
+
+const ValueSchema = z.object({
+  wert: z
+    .string()
+    .describe(
+      "Der am besten passende Wert für das Pflichtfeld. Bei vorgegebenen Optionen EXAKT eine davon " +
+        "(Text unverändert übernehmen). Ohne Optionen ein kurzer, passender Freitext. Leer, wenn unklar.",
+    ),
+});
+
+const VALUE_SYSTEM_PROMPT = `Du füllst ein Pflichtfeld eines kleinanzeigen.de-Formulars für einen gebrauchten Artikel.
+Du bekommst den Artikel, den Feldnamen und – falls vorhanden – die wählbaren Optionen dieses Felds.
+Wähle den Wert, der am besten zum Artikel passt. Gibt es Optionen, übernimm EXAKT eine davon (Text unverändert).
+Bist du dir wirklich unsicher, gib einen leeren String zurück.`;
+
+/**
+ * Lässt Claude für ein (neu aufgetauchtes) Pflichtfeld den passenden Wert vorschlagen – bei
+ * Dropdowns aus den *tatsächlich* auf der Seite vorhandenen Optionen, sonst als kurzer Freitext.
+ * Rein best-effort: gibt bei fehlendem KI-Zugang o. Ä. einen leeren String zurück (Feld wird dann
+ * ohne Vorbelegung abgefragt), wirft also nie.
+ */
+export async function suggestFieldValue(
+  product: CategoryProduct,
+  fieldLabel: string,
+  options: string[],
+): Promise<string> {
+  const attrs = (product.attributes ?? []).map((a) => `${a.label}: ${a.wert}`).join(", ");
+  const userText = [
+    `Artikel: ${product.title}`,
+    attrs ? `Merkmale: ${attrs}` : "",
+    `Beschreibung: ${product.description}`,
+    "",
+    `Pflichtfeld: ${fieldLabel}`,
+    options.length ? `Wählbare Optionen:\n${options.map((o, i) => `${i}: ${o}`).join("\n")}` : "(freies Textfeld)",
+    "",
+    "Antworte mit dem passenden Wert (bei Optionen exakt eine davon; sonst kurzer Freitext; sonst leer).",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  try {
+    const client = new Anthropic();
+    const response = await client.beta.messages.parse({
+      model: CATEGORY_MODEL,
+      max_tokens: 200,
+      system: VALUE_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: userText }],
+      output_format: betaZodOutputFormat(ValueSchema),
+    });
+    const wert = response.parsed_output?.wert?.trim() ?? "";
+    // Bei Optionen nur einen echten Treffer akzeptieren (kein halluzinierter Wert).
+    if (options.length > 0) {
+      return options.find((o) => o.trim() === wert) ?? "";
+    }
+    return wert;
+  } catch {
+    return "";
+  }
+}

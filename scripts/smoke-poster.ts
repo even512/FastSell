@@ -55,7 +55,8 @@ async function runCase(
     category: "Elektronik > PC-Zubehör & Software > Netzwerk & Modem",
     condition: "",
     description: "Testbeschreibung. Nur Abholung.",
-    attributes: [],
+    // Merkmal für das Pflicht-Custom-Dropdown „Gerät & Zubehör" mitgeben → wird generisch gefüllt.
+    attributes: [{ label: "Gerät & Zubehör", wert: "Mit Zubehör" }],
     priceType,
     priceCents: 2500,
     photos: [TINY_JPEG],
@@ -76,14 +77,65 @@ async function runCase(
   const url = new URL(done.url);
   const gotPt = url.searchParams.get("priceType");
   const gotShip = url.searchParams.get("shipping");
+  const gotGeraet = url.searchParams.get("geraet");
   if (gotPt !== expectPriceType)
     throw new Error(`${priceType}: Preisart im Formular = ${gotPt}, erwartet ${expectPriceType}`);
   if (gotShip !== "PICKUP")
     throw new Error(`${priceType}: Versand im Formular = ${gotShip}, erwartet PICKUP`);
+  // Das Custom-Dropdown-Pflichtfeld muss generisch aus attributes gefüllt worden sein.
+  if (gotGeraet !== "Mit Zubehör")
+    throw new Error(`${priceType}: „Gerät & Zubehör" im Formular = ${gotGeraet}, erwartet „Mit Zubehör"`);
   const warned = events.filter((e) => e.message.startsWith("⚠"));
   if (warned.length)
     throw new Error(`${priceType}: Warnungen: ${warned.map((w) => w.message).join("; ")}`);
-  console.log(`✅ ${priceType}: Preisart=${gotPt}, Versand=${gotShip}\n`);
+  console.log(`✅ ${priceType}: Preisart=${gotPt}, Versand=${gotShip}, Gerät=${gotGeraet}\n`);
+}
+
+/**
+ * Prüft die Erkennung neuer/unbekannter Pflichtfelder: 1. Versuch OHNE Wert für „Gerät & Zubehör"
+ * → der Poster muss `action_required` mit dem fehlenden Feld + gescrapten Optionen melden (statt
+ * generisch abzubrechen). 2. Versuch MIT nachgetragenem Wert → Anzeige wird eingestellt.
+ */
+async function runMissingFieldCase(
+  publishListing: (req: PublishRequest, on: (p: PublishProgress) => void) => Promise<void>,
+) {
+  const base: PublishRequest = {
+    title: "Testartikel Pflichtfeld",
+    category: "Elektronik > PC-Zubehör & Software > Netzwerk & Modem",
+    condition: "",
+    description: "Testbeschreibung. Nur Abholung.",
+    attributes: [],
+    priceType: "VB",
+    priceCents: 2500,
+    photos: [TINY_JPEG],
+  };
+
+  // 1. Versuch: ohne Merkmal → Rückfrage erwartet.
+  const ev1: PublishProgress[] = [];
+  await publishListing(base, (p) => {
+    ev1.push(p);
+    console.log(`  [1][${p.step}/${p.status}] ${p.message}`);
+  });
+  const ar = ev1.find((e) => e.status === "action_required" && (e.missingFields?.length ?? 0) > 0);
+  if (!ar) throw new Error("Pflichtfeld: kein action_required mit missingFields im Event-Log");
+  const mf = ar.missingFields!.find((f) => /gerät|geraet|zubehör|zubehor/i.test(f.label));
+  if (!mf) throw new Error(`Pflichtfeld: „Gerät & Zubehör" nicht erkannt (Felder: ${ar.missingFields!.map((f) => f.label).join(", ")})`);
+  if (!mf.options?.includes("Mit Zubehör"))
+    throw new Error(`Pflichtfeld: Optionen nicht gescraped (bekam: ${JSON.stringify(mf.options)})`);
+  if (ev1.some((e) => e.status === "done"))
+    throw new Error("Pflichtfeld: fälschlich als veröffentlicht gemeldet, obwohl Pflichtfeld fehlte");
+
+  // 2. Versuch: Wert nachtragen → muss veröffentlichen (Retry-from-scratch).
+  const ev2: PublishProgress[] = [];
+  await publishListing({ ...base, attributes: [{ label: mf.label, wert: "Mit Zubehör" }] }, (p) => {
+    ev2.push(p);
+    console.log(`  [2][${p.step}/${p.status}] ${p.message}`);
+  });
+  const done = ev2.find((e) => e.status === "done");
+  if (!done?.url) throw new Error("Pflichtfeld: 2. Versuch nicht veröffentlicht");
+  if (new URL(done.url).searchParams.get("geraet") !== "Mit Zubehör")
+    throw new Error("Pflichtfeld: nachgetragener Wert kam im Formular nicht an");
+  console.log(`✅ Pflichtfeld-Erkennung: erkannt „${mf.label}" + Optionen; Retry veröffentlicht\n`);
 }
 
 async function main() {
@@ -106,6 +158,7 @@ async function main() {
     await runCase(publishListing, "VB", "NEGOTIABLE");
     await runCase(publishListing, "FIXED", "FIXED");
     await runCase(publishListing, "FREE", "GIVE_AWAY");
+    await runMissingFieldCase(publishListing);
     console.log("✅ Poster-Smoke-Test komplett OK");
     process.exit(0);
   } finally {

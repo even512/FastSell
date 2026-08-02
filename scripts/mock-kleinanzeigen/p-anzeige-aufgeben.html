@@ -59,6 +59,20 @@
       <label for="ad-price-amount">Preis</label>
       <input id="ad-price-amount" name="price">
 
+      <!-- Kategorie-Merkmal „Gerät & Zubehör": Custom-Dropdown (role=listbox), Pflichtfeld.
+           Ohne Wert zeigt das Formular beim Absenden „Bitte gib einen Wert ein." und bleibt
+           im Formular – genau der Fall aus dem Screenshot. -->
+      <div id="attr-row-1">
+        <label for="attr-geraet-trigger">Gerät &amp; Zubehör</label>
+        <button type="button" id="attr-geraet-trigger" role="combobox" aria-haspopup="listbox" aria-expanded="false">Bitte wählen</button>
+        <div id="attr-geraet-menu" class="menu" role="listbox">
+          <div role="option" id="attr-geraet-opt-0">Nur Gerät</div>
+          <div role="option" id="attr-geraet-opt-1">Mit Originalverpackung</div>
+          <div role="option" id="attr-geraet-opt-2">Mit Zubehör</div>
+        </div>
+        <span id="attr-geraet-error" class="hidden">Bitte gib einen Wert ein.</span>
+      </div>
+
       <!-- Preisart: Custom-Dropdown wie auf kleinanzeigen.de -->
       <button type="button" id="ad-price-type" aria-haspopup="menu">Bitte wählen</button>
       <div id="pt-menu" class="menu" role="menu">
@@ -114,7 +128,7 @@
     }
 
     function initForm() {
-      const state = { priceType: "", shipping: "yes" };
+      const state = { priceType: "", shipping: "yes", geraet: "" };
       const trigger = document.getElementById("ad-price-type");
       const menu = document.getElementById("pt-menu");
       trigger.addEventListener("click", () => menu.classList.toggle("open"));
@@ -129,11 +143,38 @@
       document.querySelectorAll('input[name="shippingEnabled"]').forEach((r) =>
         r.addEventListener("change", () => (state.shipping = r.value)),
       );
+
+      // Pflicht-Merkmal „Gerät & Zubehör" (Custom-Dropdown).
+      const gTrigger = document.getElementById("attr-geraet-trigger");
+      const gMenu = document.getElementById("attr-geraet-menu");
+      const gError = document.getElementById("attr-geraet-error");
+      gTrigger.addEventListener("click", () => {
+        const open = gMenu.classList.toggle("open");
+        gTrigger.setAttribute("aria-expanded", String(open));
+      });
+      for (const opt of gMenu.querySelectorAll('[role="option"]')) {
+        opt.addEventListener("click", () => {
+          state.geraet = opt.textContent;
+          gTrigger.textContent = opt.textContent;
+          gTrigger.setAttribute("aria-invalid", "false");
+          gMenu.classList.remove("open");
+          gTrigger.setAttribute("aria-expanded", "false");
+          gError.classList.add("hidden");
+        });
+      }
+
       document.getElementById("submit-btn").addEventListener("click", () => {
+        // Pflichtfeld nicht gesetzt → Fehlermeldung zeigen und im Formular bleiben.
+        if (!state.geraet) {
+          gError.classList.remove("hidden");
+          gTrigger.setAttribute("aria-invalid", "true");
+          return;
+        }
         const q = new URLSearchParams({
           adId: "4242",
           priceType: state.priceType || "NONE",
           shipping: document.getElementById("ad-shipping-enabled-no").checked ? "PICKUP" : "SHIPPING",
+          geraet: state.geraet,
         });
         location.href = "p-anzeige-aufgeben-bestaetigung.html?" + q.toString();
       });
