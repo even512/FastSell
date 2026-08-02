@@ -4,10 +4,10 @@ import path from "node:path";
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright";
 import { chromium } from "playwright-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
-import { chooseCategoryOption, type CategoryProduct } from "./categorize";
+import { chooseCategoryOption, suggestFieldValue, type CategoryProduct } from "./categorize";
 import { parseDataUrl } from "./images";
 import { loadStorageState } from "./session";
-import type { PriceType, PublishProgress, PublishRequest } from "./types";
+import type { Attribute, MissingField, PriceType, PublishProgress, PublishRequest } from "./types";
 
 // Stealth-Plugin registrieren (reduziert Bot-Erkennung; kein Freifahrtschein gegen Akamai).
 chromium.use(StealthPlugin());
@@ -851,6 +851,289 @@ async function setShippingPickup(
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Kategorie-spezifische Merkmalfelder (Art/Farbe/„Gerät & Zubehör" …)
+//
+// Diese Felder hängen von der gewählten Kategorie ab und sind nicht fest bekannt.
+// Strategie: bekannte Merkmale generisch füllen; nach dem Absenden anhand von
+// Kleinanzeigens eigener Validierung ("Bitte gib einen Wert ein.") erkennen,
+// welche Pflichtfelder noch offen sind, und diese an die UI zur Rückfrage geben.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Ein auf der Formularseite erkanntes Merkmal-Control (mit Tag zum Wiederansteuern). */
+interface ScannedField {
+  fi: number; // via data-fastsell-fi im DOM markiert
+  label: string;
+  kind: "select" | "custom";
+  options: string[]; // native <select>-Optionen (custom: [] – erst beim Öffnen scrapebar)
+  empty: boolean; // aktuell kein Wert gewählt
+  hasError: boolean; // zeigt eine Pflichtfeld-Fehlermeldung / ist aria-invalid
+}
+
+/**
+ * Scannt die aktuellen Kategorie-Merkmalfelder (native <select> und Custom-Dropdowns), markiert
+ * jedes per `data-fastsell-fi` und liefert Label, Art, Optionen (bei <select>), Leer- und
+ * Fehlerzustand. Felder mit eigener Behandlung (Zustand/Preis/Versand …) werden ausgelassen.
+ */
+async function scanAttributeFields(page: Page): Promise<ScannedField[]> {
+  return page.evaluate(() => {
+    const ERR = /Bitte gib einen Wert ein|Bitte wähle|Pflichtfeld|ist erforderlich/i;
+    const SKIP = /titel|beschreib|preis|zustand|versand|kategorie|standort|plz|\bort\b|telefon|\bname\b|e-?mail/i;
+    const PLACEHOLDER = /^\s*$|bitte wählen|bitte auswählen/i;
+    const visible = (el: Element) => (el as HTMLElement).offsetParent !== null;
+
+    const findLabel = (el: Element): string => {
+      const id = (el as HTMLElement).id;
+      if (id) {
+        const l = document.querySelector(`label[for="${CSS.escape(id)}"]`);
+        if (l && (l.textContent || "").trim()) return (l.textContent || "").trim();
+      }
+      const aria = el.getAttribute("aria-label");
+      if (aria && aria.trim()) return aria.trim();
+      const labelledby = el.getAttribute("aria-labelledby");
+      if (labelledby) {
+        const l = document.getElementById(labelledby);
+        if (l && (l.textContent || "").trim()) return (l.textContent || "").trim();
+      }
+      // Nach oben klettern und ein Label/Legend suchen, das das Control NICHT umschließt.
+      let n: Element | null = el;
+      for (let i = 0; i < 4 && n; i++) {
+        const parent: HTMLElement | null = n.parentElement;
+        if (parent) {
+          for (const c of Array.from(parent.querySelectorAll("label, legend"))) {
+            if (!c.contains(el)) {
+              const t = (c.textContent || "").trim();
+              if (t) return t;
+            }
+          }
+        }
+        n = parent;
+      }
+      return "";
+    };
+
+    const cleanLabel = (t: string): string =>
+      t.replace(ERR, "").replace(/\(optional\)/gi, "").replace(/\s+/g, " ").trim();
+
+    // Fehler nur in der ENGEN Umgebung des Controls prüfen (sonst färbt ein Fehler eines anderen
+    // Felds fälschlich ab). Nur SICHTBARE Fehlermeldungen zählen – ausgeblendete Error-Elemente
+    // (display:none) bleiben oft im DOM und würden sonst ein bereits gültiges Feld fälschlich
+    // als fehlerhaft markieren.
+    const nearError = (el: Element): boolean => {
+      if (el.getAttribute("aria-invalid") === "true") return true;
+      const scopes: Element[] = [];
+      let n: Element | null = el;
+      for (let i = 0; i < 3 && n; i++) {
+        const p: HTMLElement | null = n.parentElement;
+        if (p) {
+          const ctrls = p.querySelectorAll("select, input, textarea, button[role], [role='combobox']").length;
+          if (ctrls <= 3) scopes.push(p);
+        }
+        n = p;
+      }
+      for (const scope of scopes) {
+        for (const cand of Array.from(scope.querySelectorAll("*"))) {
+          if (cand.contains(el)) continue;
+          if ((cand as HTMLElement).offsetParent === null) continue; // unsichtbar → ignorieren
+          const own = (cand.textContent || "").trim();
+          if (own && own.length < 120 && ERR.test(own)) return true;
+        }
+      }
+      const cls = (el.getAttribute("class") || "") + " " + (el.parentElement?.getAttribute("class") || "");
+      return /(^|[^a-z])(error|invalid|has-error)([^a-z]|$)/i.test(cls);
+    };
+
+    const candidates: { el: Element; kind: "select" | "custom" }[] = [];
+    for (const el of Array.from(document.querySelectorAll("select"))) {
+      if (visible(el)) candidates.push({ el, kind: "select" });
+    }
+    const customSel =
+      'button[role="combobox"], [role="combobox"], button[aria-haspopup="listbox"], button[aria-expanded]';
+    for (const el of Array.from(document.querySelectorAll(customSel))) {
+      if (visible(el)) candidates.push({ el, kind: "custom" });
+    }
+    for (const el of Array.from(document.querySelectorAll("button"))) {
+      if (!visible(el)) continue;
+      if (/^bitte (wählen|auswählen)/i.test((el.textContent || "").trim()) && !candidates.some((c) => c.el === el)) {
+        candidates.push({ el, kind: "custom" });
+      }
+    }
+
+    const out: ScannedField[] = [];
+    const seen = new Set<Element>();
+    let fi = 0;
+    for (const { el, kind } of candidates) {
+      if (seen.has(el)) continue;
+      seen.add(el);
+      const label = cleanLabel(findLabel(el));
+      if (!label || SKIP.test(label.toLowerCase())) continue;
+
+      let options: string[] = [];
+      let empty = false;
+      if (kind === "select") {
+        const sel = el as HTMLSelectElement;
+        options = Array.from(sel.options)
+          .map((o) => (o.textContent || "").trim())
+          .filter((t) => t && !PLACEHOLDER.test(t));
+        const selText = sel.selectedIndex >= 0 ? (sel.options[sel.selectedIndex].textContent || "").trim() : "";
+        empty = !sel.value || PLACEHOLDER.test(selText);
+      } else {
+        empty = PLACEHOLDER.test((el.textContent || "").trim());
+      }
+
+      el.setAttribute("data-fastsell-fi", String(fi));
+      out.push({ fi, label, kind, options, empty, hasError: nearError(el) });
+      fi++;
+    }
+    return out;
+  });
+}
+
+/** Ähnlichster Optionstext zu `value` (>=60 Score), sonst null. */
+function bestOption(options: string[], value: string): string | null {
+  let best: string | null = null;
+  let bestScore = 0;
+  for (const o of options) {
+    const s = scoreCat(value, o);
+    if (s > bestScore) {
+      best = o;
+      bestScore = s;
+    }
+  }
+  return bestScore >= 60 ? best : null;
+}
+
+/** Wählt in einem bereits geöffneten Custom-Dropdown die zu `value` passende Option. */
+async function clickBestOption(page: Page, value: string): Promise<boolean> {
+  if (await clickExactText(page, value)) return true;
+  const opts = await page.evaluate(() => {
+    const vis = (el: Element) => (el as HTMLElement).offsetParent !== null;
+    return Array.from(document.querySelectorAll('[role="option"], [role="menuitem"], li'))
+      .filter(vis)
+      .map((el) => (el.textContent || "").trim().replace(/\s+/g, " "))
+      .filter((t) => t.length > 0 && t.length < 60);
+  });
+  const target = bestOption([...new Set(opts)], value);
+  return target ? clickExactText(page, target) : false;
+}
+
+/** Setzt ein einzelnes Merkmalfeld (per `data-fastsell-fi`-Tag) auf `value`. Best effort. */
+async function setAttributeField(page: Page, field: ScannedField, value: string): Promise<boolean> {
+  const el = page.locator(`[data-fastsell-fi="${field.fi}"]`).first();
+  if ((await el.count().catch(() => 0)) === 0) return false;
+  if (field.kind === "select") {
+    const target = bestOption(field.options, value);
+    if (!target) return false;
+    return !!(await el.selectOption({ label: target }).catch(() => null));
+  }
+  try {
+    await el.click({ timeout: FIELD_TIMEOUT });
+  } catch {
+    return false;
+  }
+  await randomDelay(200, 500);
+  const ok = await clickBestOption(page, value);
+  if (!ok) await page.keyboard.press("Escape").catch(() => {});
+  return ok;
+}
+
+/**
+ * Füllt kategorie-spezifische Merkmalfelder (Art/Farbe/…) generisch aus `attributes`, indem das
+ * Feld-Label unscharf gegen die Attribut-Labels gematcht wird. Nur bei gutem Treffer (>=60), damit
+ * nichts falsch gesetzt wird. Best effort – bricht den Post nie ab.
+ */
+async function fillCategoryAttributes(
+  page: Page,
+  attributes: Attribute[],
+  onProgress: (p: PublishProgress) => void,
+): Promise<void> {
+  const attrs = attributes.filter((a) => a.label?.trim() && a.wert?.trim());
+  if (!attrs.length) return;
+  let fields: ScannedField[];
+  try {
+    fields = await scanAttributeFields(page);
+  } catch {
+    return;
+  }
+  if (!fields.length) return;
+
+  const usedFields = new Set<number>();
+  let filledAny = false;
+  for (const a of attrs) {
+    let best: ScannedField | null = null;
+    let bestScore = 0;
+    for (const f of fields) {
+      if (usedFields.has(f.fi)) continue;
+      const s = scoreCat(a.label, f.label);
+      if (s > bestScore) {
+        best = f;
+        bestScore = s;
+      }
+    }
+    if (!best || bestScore < 60) continue;
+    if (await setAttributeField(page, best, a.wert)) {
+      usedFields.add(best.fi);
+      filledAny = true;
+    }
+    await randomDelay(150, 400);
+  }
+  if (filledAny) {
+    onProgress({ step: "attributes", status: "running", message: "Kategorie-Merkmale werden ausgefüllt …" });
+  }
+}
+
+/** Öffnet ein Custom-Dropdown (per Tag) und scrapt seine sichtbaren Optionstexte. */
+async function scrapeCustomOptions(page: Page, fi: number): Promise<string[]> {
+  const trigger = page.locator(`[data-fastsell-fi="${fi}"]`).first();
+  if ((await trigger.count().catch(() => 0)) === 0) return [];
+  try {
+    await trigger.click({ timeout: FIELD_TIMEOUT });
+  } catch {
+    return [];
+  }
+  await randomDelay(200, 500);
+  const opts = await page
+    .evaluate(() => {
+      const vis = (el: Element) => (el as HTMLElement).offsetParent !== null;
+      return Array.from(document.querySelectorAll('[role="option"], [role="menuitem"], li'))
+        .filter(vis)
+        .map((el) => (el.textContent || "").trim().replace(/\s+/g, " "))
+        .filter((t) => t.length > 0 && t.length < 60 && !/bitte (wählen|auswählen)/i.test(t));
+    })
+    .catch(() => [] as string[]);
+  await page.keyboard.press("Escape").catch(() => {});
+  return [...new Set(opts)].slice(0, 60);
+}
+
+/**
+ * Erkennt nach einem Absende-Versuch die Pflichtfelder, die Kleinanzeigen noch bemängelt
+ * („Bitte gib einen Wert ein."). Liefert pro Feld Label + (bei Dropdowns) die echten Optionen,
+ * damit die UI gezielt danach fragen kann. So bleibt jeder Post lösbar, auch bei neuen Feldern.
+ */
+async function findMissingRequiredFields(page: Page): Promise<MissingField[]> {
+  let fields: ScannedField[];
+  try {
+    fields = await scanAttributeFields(page);
+  } catch {
+    return [];
+  }
+  const out: MissingField[] = [];
+  const seenKeys = new Set<string>();
+  for (const f of fields.filter((x) => x.hasError)) {
+    const key = normCat(f.label);
+    if (!key || seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    const options = f.kind === "custom" ? await scrapeCustomOptions(page, f.fi) : f.options;
+    out.push({
+      label: f.label,
+      key,
+      type: options.length ? "select" : "text",
+      options: options.length ? options : undefined,
+    });
+  }
+  return out;
+}
+
 /**
  * Stellt eine Anzeige über Browser-Automation ein.
  *
@@ -895,6 +1178,13 @@ export async function publishListing(
       locale: "de-DE",
       viewport: { width: 1280, height: 900 },
     });
+    // No-op-Shim für `__name`: manche Transpiler (esbuild/tsx mit keepNames) referenzieren diesen
+    // Helfer in Funktionen, die per page.evaluate in den Browser serialisiert werden – dort ist er
+    // sonst undefiniert (ReferenceError). Als String eingespielt, damit er selbst nicht transpiliert
+    // wird. In Produktion (Next/SWC) schadet der harmlose Shim nicht.
+    await context.addInitScript(
+      "globalThis.__name = globalThis.__name || function (fn) { return fn; };",
+    );
     page = await context.newPage();
 
     onProgress({ step: "navigate", status: "running", message: "Öffne die Seite zum Anzeigen-Aufgeben …" });
@@ -983,6 +1273,11 @@ export async function publishListing(
     await fileInput.setInputFiles(files, { timeout: FIELD_TIMEOUT });
     await randomDelay(1500, 3000);
 
+    // Kategorie-spezifische Merkmale (Art/Farbe/„Gerät & Zubehör" …) generisch aus den Attributen
+    // füllen. Beim Retry stecken hier auch die vom Nutzer nachgetragenen Pflichtfeld-Werte drin.
+    await fillCategoryAttributes(page, req.attributes, onProgress).catch(() => {});
+    await randomDelay(200, 600);
+
     // Absenden – Button „Anzeige aufgeben" (früher #pstad-submit).
     onProgress({ step: "submit", status: "running", message: "Anzeige wird veröffentlicht …" });
     // Sicherheitsnetz: ein noch offener Dialog (Backdrop) würde den Submit-Klick abfangen.
@@ -1034,6 +1329,33 @@ export async function publishListing(
     const stillOnForm = await page.locator(TITLE_SEL).count().catch(() => 1);
     const published = CONFIRM_RE.test(finalUrl) || stillOnForm === 0;
     if (!published) {
+      // Häufigste Ursache fürs Hängenbleiben: ein kategorie-spezifisches Pflichtfeld, das FastSell
+      // (noch) nicht kennt (z. B. „Gerät & Zubehör"). Statt generisch abzubrechen: gezielt erkennen
+      // und den Nutzer explizit danach fragen (mit Claude-Vorschlag) – dann Retry mit den Werten.
+      const missing = await findMissingRequiredFields(page).catch(() => [] as MissingField[]);
+      if (missing.length) {
+        const product: CategoryProduct = {
+          title: req.title,
+          description: req.description,
+          attributes: req.attributes,
+          hint: req.category,
+        };
+        for (const f of missing) {
+          f.suggestion = await suggestFieldValue(product, f.label, f.options ?? []);
+        }
+        const names = missing.map((f) => `„${f.label}"`).join(", ");
+        const many = missing.length > 1;
+        onProgress({
+          step: "attributes",
+          status: "action_required",
+          message:
+            `Kleinanzeigen verlangt für diese Kategorie ${many ? "zusätzliche Pflichtfelder" : "ein zusätzliches Pflichtfeld"}: ` +
+            `${names}. Bitte ${many ? "die Werte" : "den Wert"} bestätigen – danach stelle ich die Anzeige automatisch fertig ein.`,
+          missingFields: missing,
+          screenshot: await screenshotDataUrl(page),
+        });
+        return;
+      }
       await reportFailure(
         "verify",
         "Das Absenden wurde ausgelöst, aber die Veröffentlichung ließ sich nicht bestätigen (die " +

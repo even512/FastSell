@@ -54,6 +54,17 @@ export interface PublishRequest {
   photos: string[]; // ausgewählte data-URLs (eine pro Foto)
 }
 
+// Ein von Kleinanzeigen verlangtes Pflichtfeld, das FastSell nicht automatisch
+// füllen konnte (neu/unbekannt für die gewählte Kategorie). Wird bei
+// `action_required` an die UI gereicht, damit der Nutzer den Wert nachträgt.
+export interface MissingField {
+  label: string; // sichtbares Feld-Label, z. B. "Gerät & Zubehör"
+  key: string; // normalisiertes Label – stabiler Schlüssel zum Wiederfinden beim Retry
+  type: "select" | "text"; // Dropdown (Optionen) oder freies Textfeld
+  options?: string[]; // bei "select": die tatsächlich wählbaren Optionen der Seite
+  suggestion?: string; // von Claude vorgeschlagener Wert (aus options bzw. Kontext)
+}
+
 // SSE-Event-Payload beim Posten
 export interface PublishProgress {
   step: string;
@@ -62,6 +73,7 @@ export interface PublishProgress {
   url?: string;
   screenshot?: string; // data:image/png;base64,... – bei Fehler/Blockade
   details?: string; // technische Diagnose (z. B. gefundene Formularfelder) zum Weitergeben
+  missingFields?: MissingField[]; // bei action_required: neue Pflichtfelder zum Abfragen
 }
 
 // Status-Antwort von GET /api/login
