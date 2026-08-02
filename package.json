@@ -12,6 +12,11 @@
     "smoke:images": "tsx scripts/smoke-images.ts",
     "smoke:poster": "tsx scripts/smoke-poster.ts"
   },
+  "overrides": {
+    "@imgly/background-removal-node": {
+      "sharp": "$sharp"
+    }
+  },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.70.0",
     "@imgly/background-removal-node": "^1.4.5",

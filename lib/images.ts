@@ -1,4 +1,4 @@
-import { createRequire } from "node:module";
+import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import sharp from "sharp";
@@ -8,18 +8,15 @@ const MAX_EDGE = 1024; // lange Kante -> begrenzt zugleich die Vision-Tokens
 const NEUTRAL_BG = "#f4f1ea"; // ruhiger, neutraler Hintergrund für Freisteller
 
 /**
- * Modell-Dateien von @imgly/background-removal-node liegen in dessen dist/-Ordner; die Lib löst
- * sie per Default relativ zum **Prozess-CWD** auf. Hier stattdessen den echten Paketpfad
- * ermitteln (createRequire umgeht Webpack), damit der Freisteller unabhängig vom CWD läuft.
+ * Modell-Dateien von @imgly/background-removal-node liegen in dessen dist/-Ordner. Den Pfad
+ * explizit auflösen (statt den fragilen Default der Lib zu nutzen) und vorab prüfen, damit ein
+ * fehlendes Modell eine klare Meldung ergibt. (Kein createRequire: das kann Webpack beim
+ * Bundlen der Route nicht statisch parsen.)
  */
 function imglyPublicPath(): string | undefined {
-  try {
-    const req = createRequire(path.join(process.cwd(), "package.json"));
-    const entry = req.resolve("@imgly/background-removal-node"); // …/dist/index.cjs
-    return pathToFileURL(path.dirname(entry) + path.sep).href;
-  } catch {
-    return undefined; // Default der Lib greift (node_modules relativ zum CWD)
-  }
+  const dist = path.join(process.cwd(), "node_modules", "@imgly", "background-removal-node", "dist");
+  if (!fs.existsSync(path.join(dist, "resources.json"))) return undefined; // Lib-Default versuchen
+  return pathToFileURL(dist + path.sep).href;
 }
 
 /**
@@ -47,14 +44,17 @@ export async function cutoutPhoto(input: Buffer): Promise<Buffer> {
   // mit „Cannot find module" fehl (im Dev-Server dagegen nicht).
   const { removeBackground } = (await import("@imgly/background-removal-node")) as unknown as {
     removeBackground: (
-      input: Buffer,
+      input: Blob,
       config?: { publicPath?: string; model?: "small" | "medium" },
     ) => Promise<Blob>;
   };
   // Ausrichtung vorab normalisieren, damit der Freisteller nicht auf dem Kopf steht.
   const oriented = await sharp(input).rotate().png().toBuffer();
   const model = process.env.FASTSELL_CUTOUT_MODEL === "small" ? "small" : "medium";
-  const blob = await removeBackground(oriented, { publicPath: imglyPublicPath(), model });
+  // WICHTIG: als Blob MIT MIME-Type übergeben. Bei einem rohen Buffer erzeugt die Lib intern ein
+  // Blob ohne Type und wirft dann „Unsupported format:" – der Freisteller schlug so immer fehl.
+  const inputBlob = new Blob([new Uint8Array(oriented)], { type: "image/png" });
+  const blob = await removeBackground(inputBlob, { publicPath: imglyPublicPath(), model });
   const png = Buffer.from(await blob.arrayBuffer());
 
   return sharp(png)

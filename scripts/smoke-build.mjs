@@ -9,11 +9,21 @@ import sharp from "sharp";
 const PORT = process.env.SMOKE_PORT || "3777";
 const BASE = `http://127.0.0.1:${PORT}`;
 
-const server = spawn("npx", ["next", "start", "-p", PORT], { stdio: "inherit" });
+// Eigene Prozessgruppe: `npx next start` erzeugt Kindprozesse – beim Beenden muss die GANZE
+// Gruppe sterben, sonst hält ein verwaister next-server den Docker-Build-Step am Leben.
+const server = spawn("npx", ["next", "start", "-p", PORT], { stdio: "inherit", detached: true });
+
+function stopServer() {
+  try {
+    process.kill(-server.pid, "SIGKILL"); // negative PID = Prozessgruppe
+  } catch {
+    server.kill("SIGKILL");
+  }
+}
 
 function fail(msg) {
   console.error(`❌ Build-Smoke-Test fehlgeschlagen: ${msg}`);
-  server.kill();
+  stopServer();
   process.exit(1);
 }
 
@@ -60,7 +70,7 @@ async function main() {
   }
 
   console.log("✅ Build-Smoke-Test OK: Freisteller über den Produktions-Build erzeugt.");
-  server.kill();
+  stopServer();
   process.exit(0);
 }
 

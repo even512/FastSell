@@ -53,7 +53,10 @@ async function runCase(
     // Der Mock startet wie das Original mit der Kategorie-Auswahl; ohne API-Key läuft die
     // deterministische Pfad-Heuristik diesen Pfad durch den Mock-Baum.
     category: "Elektronik > PC-Zubehör & Software > Netzwerk & Modem",
-    condition: "",
+    // Öffnet im Mock den MODALEN Zustand-Dialog (wie auf der echten Seite). Der Test stellt
+    // sicher, dass er per „Bestätigen" geschlossen wird – sonst blockiert sein Backdrop
+    // Preisart und Submit (realer Fehlerfall vom ersten Live-Lauf).
+    condition: "Gut",
     description: "Testbeschreibung. Nur Abholung.",
     // Merkmal für das Pflicht-Custom-Dropdown „Gerät & Zubehör" mitgeben → wird generisch gefüllt.
     attributes: [{ label: "Gerät & Zubehör", wert: "Mit Zubehör" }],
@@ -85,10 +88,18 @@ async function runCase(
   // Das Custom-Dropdown-Pflichtfeld muss generisch aus attributes gefüllt worden sein.
   if (gotGeraet !== "Mit Zubehör")
     throw new Error(`${priceType}: „Gerät & Zubehör" im Formular = ${gotGeraet}, erwartet „Mit Zubehör"`);
+  const gotCond = url.searchParams.get("condition");
+  if (gotCond !== "Gut")
+    throw new Error(
+      `${priceType}: Zustand im Formular = ${gotCond}, erwartet Gut ` +
+        "(Dialog nicht per „Bestätigen“ geschlossen?)",
+    );
   const warned = events.filter((e) => e.message.startsWith("⚠"));
   if (warned.length)
     throw new Error(`${priceType}: Warnungen: ${warned.map((w) => w.message).join("; ")}`);
-  console.log(`✅ ${priceType}: Preisart=${gotPt}, Versand=${gotShip}, Gerät=${gotGeraet}\n`);
+  console.log(
+    `✅ ${priceType}: Preisart=${gotPt}, Versand=${gotShip}, Gerät=${gotGeraet}, Zustand=${gotCond}\n`,
+  );
 }
 
 /**

@@ -15,15 +15,24 @@ Mobile-first PWA + Node-Backend (Next.js), Produkterkennung & Verkaufstext mit *
 
 ---
 
+## Screenshots
+
+| Fotos | Anzeige | Preis | Einstellen |
+| --- | --- | --- | --- |
+| ![Fotos aufnehmen](docs/screenshots/01-fotos.png) | ![Anzeigen-Entwurf](docs/screenshots/02-anzeige.png) | ![Preis festlegen](docs/screenshots/03-preis.png) | ![Automatisches Einstellen](docs/screenshots/04-einstellen.png) |
+
+---
+
 ## Workflow
 
 1. **Fotos** – 2–3 Fotos des Artikels aufnehmen/hochladen.
 2. **Anzeige** – Titel, Kategorie, Zustand, Merkmale und Verkaufstext werden generiert (alles
    editierbar). Pro Foto zwischen **optimiert** (Original-Hintergrund, aufgehellt) und **Freisteller**
    (neutraler Hintergrund) wählen.
-3. **Preis** – Festpreis / VB / Verschenken. „Vergleichen" schätzt anhand ähnlicher Anzeigen eine
+3. **Preis** – Festpreis / VB / Verschenken. Der Preis-Check schätzt anhand ähnlicher Anzeigen eine
    Preisspanne und macht einen Vorschlag.
-4. **Einstellen** – Live-Fortschritt; danach „Nächster Artikel".
+4. **Einstellen** – startet direkt mit Live-Fortschritt (Kategorie, Preisart, „Nur Abholung",
+   Fotos, Veröffentlichung); danach „Nächster Artikel".
 
 ---
 
@@ -134,6 +143,7 @@ npx playwright install chromium
 app/
   page.tsx                 Schritt-Flow (Fotos → Anzeige → Preis → Einstellen)
   api/analyze/route.ts     Fotos -> Bildpipeline + Claude -> Anzeigen-Entwurf
+  api/cutout/route.ts      Freisteller on-demand für ein Foto
   api/price/route.ts       Preis-Check (Vergleichs-Listings)
   api/publish/route.ts     Auto-Posting (SSE-Fortschritt)
   api/login/route.ts       Einmaliger Login -> verschlüsselte Session (Fehlschlag: Grund + Screenshot)
@@ -142,17 +152,23 @@ app/
   api/listings/route.ts    Anzeigen-Historie
 components/                CaptureStep, ReviewStep, PriceStep, PublishStep, HistoryList, AccountPanel
 lib/
-  images.ts                sharp-Optimierung + Freisteller (optional @imgly)
+  images.ts                sharp-Optimierung + Freisteller (@imgly/background-removal-node)
   listing.ts               Claude Vision (beta.messages.parse + Zod)
+  categorize.ts            dynamische Kategorie-Auswahl (Claude wählt aus echten Optionen)
   price.ts                 Preis-Check via Playwright-Suche
   poster.ts                Kleinanzeigen-Posting (Playwright + Stealth)
   session.ts / store.ts    Verschlüsselte Session + JSON-Store (Historie)
-scripts/smoke-images.ts    Bildpipeline offline testen
+scripts/
+  smoke-images.ts          Bildpipeline offline testen
+  smoke-poster.ts          Poster gegen lokales Mock-Formular testen (ohne Kleinanzeigen)
+  smoke-build.mjs          Docker-Build-Check: Freisteller durch den echten Produktions-Build
+  mock-kleinanzeigen/      Mock des Anzeigen-Formulars (echte Selektoren) für smoke:poster
 ```
 
-Selektoren/Flow des Posters sind aus dem Community-Projekt
-[`Second-Hand-Friends/kleinanzeigen-bot`](https://github.com/Second-Hand-Friends/kleinanzeigen-bot)
-portiert und sollten gegen die aktuelle Seite validiert werden.
+Die Formular-Selektoren des Posters orientieren sich am Community-Projekt
+[`Second-Hand-Friends/kleinanzeigen-bot`](https://github.com/Second-Hand-Friends/kleinanzeigen-bot).
+Ändert Kleinanzeigen das Formular, lassen sich Anpassungen offline mit `npm run smoke:poster`
+gegen das Mock-Formular testen.
 
 ---
 
@@ -182,6 +198,7 @@ npm run build          # Produktions-Build
 npm run start          # Produktion starten
 npm run typecheck      # tsc --noEmit
 npm run smoke:images   # Bildpipeline offline testen (-> data/smoke/)
+npm run smoke:poster   # Poster-Ablauf offline gegen das Mock-Formular testen
 ```
 
 ---
@@ -191,3 +208,13 @@ npm run smoke:images   # Bildpipeline offline testen (-> data/smoke/)
 `claude-opus-4-8`: $5 / $25 pro 1M Token. Fotos werden auf ~1024 px heruntergerechnet → grob
 **~0,03–0,05 € pro Anzeige**. Bei hohem Volumen ist `claude-sonnet-5` ein Kostenhebel
 (`FASTSELL_MODEL=claude-sonnet-5`).
+
+---
+
+## Über dieses Projekt
+
+FastSell ist ein privates Hobby-Projekt, entstanden aus dem Wunsch, den heimischen
+Gebrauchtwaren-Berg ohne Tipp-Arbeit loszuwerden. Entwickelt wurde es zu großen Teilen gemeinsam
+mit **[Claude](https://claude.com)** (Claude Code) – und Claude arbeitet auch in der App selbst:
+Produkterkennung, Verkaufstexte und die Live-Kategoriewahl beim Einstellen. Keine Gewähr, kein
+Support-Anspruch – Feedback und PRs sind trotzdem willkommen.

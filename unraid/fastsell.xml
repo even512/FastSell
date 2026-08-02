@@ -14,7 +14,7 @@
   <Category>Productivity: Tools:</Category>
   <WebUI>http://[IP]:[PORT:3000]/</WebUI>
   <TemplateURL/>
-  <Icon>https://raw.githubusercontent.com/even512/FastSell/claude/kleinanzeigen-auto-listing-f38zhp/public/icon-256.png</Icon>
+  <Icon>https://raw.githubusercontent.com/even512/FastSell/main/public/icon-256.png</Icon>
   <ExtraParams/>
   <PostArgs/>
   <CPUset/>
